@@ -14,7 +14,7 @@
 2. **Persistent, searchable tool registry.** Tools created by the agent are saved locally and reused across tasks and sessions. The agent looks before it builds.
 3. **Safe-by-default execution.** Dynamically generated code runs under a real, OS-enforced permission boundary. A tiered human-in-the-loop (HITL) model gates creation and elevated executions.
 4. **Tool composition.** The agent can author *composite tools* whose implementation calls other existing tools via an internal `invokeTool` API, both proactively (during planning) and reactively (by turning a successful session slice into a named reusable tool).
-5. **Minimal external dependencies.** Rely on modern Node.js built-ins. No native addons, no framework SDKs.
+5. **Minimal external dependencies.** Rely on modern Node.js built-ins wherever practical. No native addons, no framework SDKs, no agent/LLM orchestration libraries. One pragmatic exception: the official `openai` SDK for LLM calls (see 11.2).
 6. **Abstracted seams.** Every interesting dimension — registry storage, tool lookup, sandbox mechanism, LLM provider, approval policy — sits behind a small interface so richer implementations can be swapped in later without touching call sites.
 
 ### 1.2 Non-goals (for this POC)
@@ -31,7 +31,7 @@
 - **Node.js ≥ 22.6**, for two built-in capabilities we rely on:
   - `--permission` model (Node ≥ 20.0) for OS-enforced per-process permission boundaries.
   - `--experimental-strip-types` (Node ≥ 22.6) for running `.ts` source directly without a transpile step.
-- **OpenAI-compatible Chat Completions endpoint** for the LLM. This keeps us provider-agnostic (OpenAI, any OpenAI-compatible gateway, local servers like Ollama behind an OpenAI shim, etc.).
+- **OpenAI-compatible Chat Completions endpoint** for the LLM. We use the official `openai` npm SDK and configure its `baseURL`/`apiKey` per deployment; this keeps us provider-agnostic (OpenAI directly, any OpenAI-compatible gateway, local servers like Ollama or vLLM behind an OpenAI-compatible shim, etc.).
 
 ---
 
@@ -75,7 +75,7 @@ flowchart TB
     end
 
     subgraph External
-        LLM[OpenAI-compatible<br/>Chat Completions API]
+        LLM[openai SDK<br/>Chat Completions<br/>baseURL configurable]
     end
 
     REPL --> AL
@@ -540,7 +540,41 @@ Tools are identified by `name`, and pinned by `hash` in `approval.json` and in c
 
 ## 8. Agent Loop and Prompting
 
-Standard ReAct-style tool-calling loop against an OpenAI-compatible `/v1/chat/completions` endpoint with `tools`.
+Standard ReAct-style tool-calling loop against an OpenAI-compatible Chat Completions endpoint, driven through the official `openai` SDK.
+
+### 8.1 LLM client wiring
+
+The SDK is instantiated once and passed to `AgentLoop` (and to `ToolFactory`) behind a thin internal `LLMProvider` interface. The provider abstraction exists so tests can substitute a mock — **not** because we plan to swap SDKs. Concrete implementation:
+
+```ts
+// packages/core/src/llm/openai-provider.ts
+import OpenAI from "openai";
+
+export class OpenAIProvider implements LLMProvider {
+  private client: OpenAI;
+  constructor(opts: { apiKey: string; baseURL?: string; model: string }) {
+    this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL });
+    this.model = opts.model;
+  }
+  async chat(req: ChatRequest): Promise<ChatResponse> {
+    const resp = await this.client.chat.completions.create({
+      model: this.model,
+      messages: req.messages,
+      tools: req.tools,
+      tool_choice: req.toolChoice ?? "auto",
+    });
+    return { message: resp.choices[0].message, usage: resp.usage };
+  }
+  async generateStructured<T>(req: StructuredRequest<T>): Promise<T> {
+    // Uses chat.completions.create with response_format: { type: "json_schema", ... }
+    // for the factory's ToolDraft sub-call.
+  }
+}
+```
+
+Setting `baseURL` lets the same provider drive OpenAI directly, an OpenAI-compatible gateway, or a local Ollama/vLLM instance — portability is preserved.
+
+### 8.2 Main agent loop
 
 ```ts
 async function runTurn(state: ConversationState, userMessage: string) {
@@ -551,29 +585,33 @@ async function runTurn(state: ConversationState, userMessage: string) {
       catalog: toolIndex.catalog({ maxEntries: 40 }),
       metaTools: META_TOOL_DEFINITIONS,
     });
-    const resp = await llm.chat({
-      model,
+    const { message } = await llm.chat({
       messages: [{ role: "system", content: systemPrompt }, ...state.messages],
       tools: registeredToolsForThisTurn(state),
     });
-    tracer.log("llm-turn", resp);
-    state.messages.push(resp.message);
-    if (resp.message.tool_calls?.length) {
-      for (const call of resp.message.tool_calls) {
+    tracer.log("llm-turn", message);
+    state.messages.push(message);
+    if (message.tool_calls?.length) {
+      for (const call of message.tool_calls) {
         const result = await dispatch(call); // meta-tool or real tool
         state.messages.push({
-          role: "tool", tool_call_id: call.id,
+          role: "tool",
+          tool_call_id: call.id,
           content: JSON.stringify(result),
         });
       }
       continue;
     }
-    if (resp.message.content) return resp.message.content; // natural turn end
+    if (message.content) return message.content; // natural turn end
   }
 }
 ```
 
-### 8.1 Registered tools per turn
+### 8.3 Factory's code-gen sub-call
+
+`ToolFactory` uses the same provider but with `generateStructured` and a JSON schema for `ToolDraft`, so the SDK enforces the output shape at the API level (`response_format: { type: "json_schema" }`). This replaces hand-written parse/validate-and-retry for the *shape* layer; our own static validation (Section 4.3) still runs on top for semantic checks the schema can't express (name uniqueness, dep/call-site match, etc.).
+
+### 8.4 Registered tools per turn
 
 The tools the LLM sees each turn = **meta-tools (always)** + **a short dynamic list of candidate real tools**. The dynamic list is built from:
 
@@ -582,7 +620,7 @@ The tools the LLM sees each turn = **meta-tools (always)** + **a short dynamic l
 
 The mini-catalog in the system prompt is *hints* — tools are only formally registered when invoked or surfaced by `find_tool`. This bounds the per-turn tool array size regardless of registry growth.
 
-### 8.2 Meta-tools (always registered; implemented in `AgentLoop.dispatch`, never sandboxed)
+### 8.5 Meta-tools (always registered; implemented in `AgentLoop.dispatch`, never sandboxed)
 
 | Meta-tool | Purpose |
 |---|---|
@@ -668,7 +706,7 @@ meta-agent/
         sandbox/              # interface + NodePermissionSandbox, runner.ts
         approval/             # interface + TieredApprovalPolicy
         tracer.ts
-        llm/                  # interface + OpenAICompatibleProvider
+        llm/                  # LLMProvider interface + OpenAIProvider (uses `openai` SDK)
         meta-tools/           # find_tool, invoke_tool, propose_new_tool, ...
         schemas/              # JSON schemas for manifest, trace events
       test/
@@ -726,15 +764,19 @@ This section records every meaningful choice made during design and what alterna
 
 ### 11.2 LLM integration
 
-**Chosen:** OpenAI-compatible Chat Completions API, called directly (minimal/no SDK).
+**Chosen:** Official `openai` npm SDK, instantiated with a configurable `baseURL` so any OpenAI-compatible endpoint works (OpenAI, gateways, local Ollama/vLLM). Wrapped behind a thin internal `LLMProvider` interface *for testability only* — not for future SDK swaps.
 
 **Considered:**
 
-- *Vercel AI SDK (`ai` + providers)* — rejected: adds dependency; user's stated preference was minimal deps.
-- *Pick one provider SDK (Anthropic or OpenAI)* — partially chosen (OpenAI API shape), but we treat it as a *wire protocol* rather than a vendor lock: many providers (including local runners like Ollama via a compatibility layer) speak it, so we get portability for free.
-- *Custom `LLMProvider` interface with one concrete adapter* — adopted as a thin internal wrapper so the rest of core doesn't import HTTP/SDK directly, but kept intentionally minimal.
+- *Vercel AI SDK (`ai` + providers)* — rejected: adds framework-level weight on top of a provider SDK; doesn't earn its keep for this POC.
+- *Raw `fetch` against `/v1/chat/completions`* — initially chosen, then reversed. Rejected because:
+  - We'd hand-roll message/tool-call types that the SDK already ships with correct TypeScript definitions.
+  - Structured-output paths (`response_format: { type: "json_schema" }`) used by the factory's code-gen sub-call get non-trivial serialization; SDK handles this cleanly.
+  - Retry/backoff/streaming plumbing is already built and tested in the SDK.
+  - The dependency is narrowly scoped (one package, maintained by the API owner, no transitive framework weight).
+- *Custom `LLMProvider` interface with one concrete adapter* — adopted as a thin wrapper so `AgentLoop` and `ToolFactory` don't import `openai` directly. This keeps the SDK out of the core surface area and gives tests a clean seam for mocking canned responses.
 
-**Why chosen:** portability without framework weight; lowest-surface-area dependency.
+**Why chosen:** the SDK simplifies message, tool-call, and structured-output types significantly with negligible dependency overhead, while the `baseURL` configuration preserves the portability we wanted from the OpenAI-compatible wire protocol choice. This reverses the earlier minimal-deps stance on LLM plumbing specifically; the rest of the codebase remains on built-ins.
 
 ### 11.3 Sandboxing
 
