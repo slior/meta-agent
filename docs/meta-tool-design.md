@@ -153,13 +153,15 @@ sequenceDiagram
 
 ### 4.1 Triggering
 
-The agent decides to author a tool by emitting a special meta-tool call `propose_new_tool({intent, rationale})`. This is one of a small set of **always-available meta-tools** in the system prompt (alongside `find_tool`, `invoke_tool`, `list_tools`, `propose_composite_tool`, `save_sequence_as_tool`, `stop`).
+The agent decides to author a tool by emitting a meta-tool call `propose_new_tool({intent, rationale, existingToolsConsidered})` from the main agent loop. This is one of a small set of **always-available meta-tools** in the system prompt (alongside `find_tool`, `invoke_tool`, `list_tools`, `propose_composite_tool`, `save_sequence_as_tool`, `stop`).
 
-*Why an explicit tool call and not inferred from free-text:* making creation a structured meta-tool call keeps the control flow auditable, makes the trace log clean, and lets the factory mechanically validate and retry without parsing English.
+Crucially, the main agent does **not** write the tool's code directly in its turn. The call above hands off to `ToolFactory`, which runs a **specialized LLM sub-call** with a dedicated code-gen prompt. That sub-call returns a full structured `ToolDraft` (Section 4.2). The split keeps the main conversation's context clean (no code-authoring tokens in the main loop), lets the factory use a different prompt or even a different model tuned for code generation, and lets the factory manage its own bounded repair loop without polluting the main conversation.
+
+*Why an explicit meta-tool call and not inferred from free-text:* making creation a structured meta-tool call keeps the control flow auditable, makes the trace log clean, and lets the factory mechanically validate and retry without parsing English.
 
 ### 4.2 `ToolDraft` shape
 
-What the LLM must emit as structured output from the `propose_new_tool` call:
+What the factory's specialized code-gen sub-call must return as structured output:
 
 | Field | Purpose |
 |---|---|
@@ -587,8 +589,8 @@ The mini-catalog in the system prompt is *hints* — tools are only formally reg
 | `find_tool(query, k?)` | Layer-2 search in the tool index. |
 | `list_tools()` | Full catalog dump; used sparingly when the mini-catalog was truncated. |
 | `invoke_tool(name, args)` | Explicit invocation path; alternative to letting the LLM pick from registered tools directly. |
-| `propose_new_tool(intent, ...)` | Triggers `ToolFactory` creation flow (Section 4). Requires ≥ 1 `find_tool` call this task. |
-| `propose_composite_tool(name, intent, plannedSteps)` | Same as above, composite flavor. |
+| `propose_new_tool(intent, rationale, existingToolsConsidered?)` | Triggers `ToolFactory` creation flow (Section 4). Factory runs a specialized code-gen sub-call to produce the `ToolDraft`. Requires ≥ 1 `find_tool` call this task. |
+| `propose_composite_tool(name, intent, plannedSteps)` | Same flow as above, composite flavor. Factory's sub-call uses a composite-oriented code-gen prompt and expects `invokeTool(...)` call sites rather than novel implementation logic. |
 | `save_sequence_as_tool(sliceRef, name, intent)` | Reactive composition (also callable from CLI via `/compose`). |
 | `stop(reason?)` | Signals task complete; triggers end-of-task hook (optional reactive-compose prompt). |
 
