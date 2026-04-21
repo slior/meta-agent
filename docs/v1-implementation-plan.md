@@ -26,8 +26,8 @@
 | 4 | Tracer (JSONL Append-Only) | ✅ complete (`65161c9`) |
 | 5 | Filesystem Tool Registry | ✅ complete (`4553741`) |
 | 6 | Hybrid Tool Index | ✅ complete (`11f23dc`) |
-| 7 | Tiered Approval Policy | ⏳ in progress |
-| 8 | LLM Provider (OpenAI SDK + Mock) | ⬜ pending |
+| 7 | Tiered Approval Policy | ✅ complete (`1f3ea3f`) |
+| 8 | LLM Provider (OpenAI SDK + Mock) | ⏳ in progress |
 | 9 | Sandbox Runner (Child-Side Bootstrap) | ⬜ pending |
 | 10 | NodePermissionSandbox (Parent-Side) | ⬜ pending |
 | 11 | Static Validator | ⬜ pending |
