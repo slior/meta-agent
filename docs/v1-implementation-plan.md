@@ -28,8 +28,8 @@
 | 6 | Hybrid Tool Index | ✅ complete (`11f23dc`) |
 | 7 | Tiered Approval Policy | ✅ complete (`1f3ea3f`) |
 | 8 | LLM Provider (OpenAI SDK + Mock) | ✅ complete (`e5ba4d5`) |
-| 9 | Sandbox Runner (Child-Side Bootstrap) | ⏳ in progress |
-| 10 | NodePermissionSandbox (Parent-Side) | ⬜ pending |
+| 9 | Sandbox Runner (Child-Side Bootstrap) | ✅ complete (`697e132`) |
+| 10 | NodePermissionSandbox (Parent-Side) | ⏳ in progress |
 | 11 | Static Validator | ⬜ pending |
 | 12 | Tool Factory | ⬜ pending |
 | 13 | Meta-Tools and System Prompt | ⬜ pending |
