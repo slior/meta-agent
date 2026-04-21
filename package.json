@@ -1,0 +1,16 @@
+{
+  "name": "meta-agent",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.6.0" },
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "tsc -b packages/core packages/cli",
+    "cli": "node --experimental-strip-types --no-warnings packages/cli/src/bin.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.0"
+  }
+}
