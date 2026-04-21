@@ -29,7 +29,7 @@
 | 7 | Tiered Approval Policy | ✅ complete (`1f3ea3f`) |
 | 8 | LLM Provider (OpenAI SDK + Mock) | ✅ complete (`e5ba4d5`) |
 | 9 | Sandbox Runner (Child-Side Bootstrap) | ✅ complete (`697e132`) |
-| 10 | NodePermissionSandbox (Parent-Side) | ⏳ in progress |
+| 10 | NodePermissionSandbox (Parent-Side) | ✅ complete (`aa36aac`) |
 | 11 | Static Validator | ⬜ pending |
 | 12 | Tool Factory | ⬜ pending |
 | 13 | Meta-Tools and System Prompt | ⬜ pending |
@@ -2332,6 +2332,12 @@ npm test -w @meta-agent/core
 ```
 
 Expected: 5 sandbox tests pass. (If the fs-write blocking test is flaky across Node versions because `--permission` error surfacing varies, accept either `permission_denied` or `runtime_error` kind as the test already does.)
+
+**Implementation notes from Task 10 execution (deviations from the plan above):**
+
+1. **Per-path `--allow-fs-*` flags, not comma-separated.** Node 22.22.2 only honors the first path in a comma-joined value empirically (despite the docs). The implementation emits one `--allow-fs-read=<path>` / `--allow-fs-write=<path>` flag per path.
+2. **`dirname(RUNNER_PATH)` is added to the read allowlist.** The child must be able to `import` the runner itself; the workspace/tool dirs usually do not contain it.
+3. **Node's `--permission` denials surface as thrown `ERR_ACCESS_DENIED`**, which bubble up as `runtime_error` from the runner (not as a distinct `permission_denied` kind from the sandbox). The test already accepts either; downstream code should not rely on the `permission_denied` kind for sandbox-origin denials.
 
 - [ ] **Step 7: Commit**
 
