@@ -64,6 +64,15 @@ export class FsToolRegistry implements ToolRegistry {
     }));
   }
 
+  listSync(): ToolSummary[] {
+    return Array.from(this.cache.values()).map(({ tool }) => ({
+      name: tool.manifest.name,
+      description: tool.manifest.description,
+      hash: tool.manifest.hash,
+      kind: tool.manifest.kind,
+    }));
+  }
+
   async has(name: string): Promise<boolean> {
     return this.cache.has(name);
   }
