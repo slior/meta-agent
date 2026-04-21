@@ -1,0 +1,17 @@
+{
+  "$schema": "./meta-agent.schema.json",
+  "llm": {
+    "baseURL": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "apiKeyEnv": "OPENAI_API_KEY"
+  },
+  "workspace": "./workspace",
+  "toolsDir": "./tools",
+  "tracesDir": "./traces",
+  "yolo": false,
+  "maxTurns": 20,
+  "sandbox": {
+    "maxDepth": 8,
+    "maxOutputBytes": 1048576
+  }
+}
