@@ -24,8 +24,8 @@
 | 2 | Shared Types and JSON Schemas | ✅ complete (`a236893`) |
 | 3 | Canonical JSON and Hashing | ✅ complete (`d9f5716`) |
 | 4 | Tracer (JSONL Append-Only) | ✅ complete (`65161c9`) |
-| 5 | Filesystem Tool Registry | ⏳ in progress |
-| 6 | Hybrid Tool Index | ⬜ pending |
+| 5 | Filesystem Tool Registry | ✅ complete (`4553741`) |
+| 6 | Hybrid Tool Index | ⏳ in progress |
 | 7 | Tiered Approval Policy | ⬜ pending |
 | 8 | LLM Provider (OpenAI SDK + Mock) | ⬜ pending |
 | 9 | Sandbox Runner (Child-Side Bootstrap) | ⬜ pending |
