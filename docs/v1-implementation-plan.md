@@ -7,7 +7,7 @@
 **Architecture:** Monorepo with two packages — `packages/core` (all mechanics, zero TTY deps) and `packages/cli` (demo REPL + approval TUI). Every major dimension (registry, index, sandbox, approval, LLM) sits behind an interface so future implementations can be swapped in.
 
 **Tech Stack:**
-- Node.js ≥ 22.6 (needs `--permission` and `--experimental-strip-types`)
+- Node.js ≥ 22.7 (needs `--permission` and `--experimental-transform-types`; `--experimental-strip-types` is on by default from 22.6+ but does not handle TypeScript-only syntax like access modifiers, so transform-types is required)
 - TypeScript (source) run directly via Node type-stripping — no transpile step for generated tools
 - `openai` SDK for LLM calls (configurable `baseURL` → OpenAI/gateways/Ollama/vLLM)
 - `ajv` for JSON Schema validation
@@ -23,8 +23,8 @@
 | 1 | Workspace Scaffold | ✅ complete (`d312ddd`) |
 | 2 | Shared Types and JSON Schemas | ✅ complete (`a236893`) |
 | 3 | Canonical JSON and Hashing | ✅ complete (`d9f5716`) |
-| 4 | Tracer (JSONL Append-Only) | ⏳ in progress |
-| 5 | Filesystem Tool Registry | ⬜ pending |
+| 4 | Tracer (JSONL Append-Only) | ✅ complete (`65161c9`) |
+| 5 | Filesystem Tool Registry | ⏳ in progress |
 | 6 | Hybrid Tool Index | ⬜ pending |
 | 7 | Tiered Approval Policy | ⬜ pending |
 | 8 | LLM Provider (OpenAI SDK + Mock) | ⬜ pending |
@@ -47,7 +47,7 @@ Legend: ⬜ pending · ⏳ in progress · ✅ complete
 Before starting, confirm the environment:
 
 ```bash
-node --version    # must be >= 22.6.0
+node --version    # must be >= 22.7.0 (22.22+ recommended for stable transform-types)
 git --version
 ```
 
@@ -64,7 +64,7 @@ meta-agent/
 ├── package.json                          # root, workspaces, scripts
 ├── tsconfig.base.json                    # shared TS config
 ├── .gitignore
-├── .nvmrc                                # 22.6.0
+├── .nvmrc                                # 22.22.2
 ├── docs/
 │   ├── meta-tool-design.md               # (exists)
 │   └── v1-implementation-plan.md         # (this file)
@@ -137,7 +137,7 @@ meta-agent/
 - [ ] **Step 1: Create `.nvmrc`**
 
 ```
-22.6.0
+22.22.2
 ```
 
 - [ ] **Step 2: Create `.gitignore`**
@@ -161,12 +161,12 @@ traces/*.jsonl
   "name": "meta-agent",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.6.0" },
+  "engines": { "node": ">=22.7.0" },
   "workspaces": ["packages/*"],
   "scripts": {
     "test": "npm test --workspaces --if-present",
     "typecheck": "tsc -b packages/core packages/cli",
-    "cli": "node --experimental-strip-types --no-warnings packages/cli/src/bin.ts"
+    "cli": "node --experimental-transform-types --no-warnings packages/cli/src/bin.ts"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
@@ -208,7 +208,7 @@ traces/*.jsonl
   "main": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "scripts": {
-    "test": "node --test --experimental-strip-types --no-warnings 'src/**/*.test.ts'"
+    "test": "node --test --experimental-transform-types --no-warnings 'src/**/*.test.ts'"
   },
   "dependencies": {
     "openai": "^4.67.0",
@@ -246,7 +246,7 @@ export const version = "0.1.0";
   "main": "./src/bin.ts",
   "bin": { "meta-agent": "./src/bin.ts" },
   "scripts": {
-    "test": "node --test --experimental-strip-types --no-warnings 'src/**/*.test.ts'"
+    "test": "node --test --experimental-transform-types --no-warnings 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@meta-agent/core": "*"
@@ -1967,7 +1967,7 @@ const RUNNER = join(__dirname, "runner.ts");
 function runChild(toolPath: string, args: unknown): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [
-      "--experimental-strip-types",
+      "--experimental-transform-types",
       "--no-warnings",
       RUNNER,
       toolPath,
@@ -2211,7 +2211,7 @@ export class NodePermissionSandbox implements Sandbox {
       const perms = tool.manifest.permissions;
       const flags: string[] = [
         "--permission",
-        "--experimental-strip-types",
+        "--experimental-transform-types",
         "--no-warnings",
         "--no-addons",
         `--max-old-space-size=${tool.manifest.limits.maxOldSpaceSizeMb}`,
@@ -3858,7 +3858,7 @@ This step is a manual sanity check; we do not assert specific output. Create a m
 ```bash
 mkdir -p config workspace tools traces
 cp packages/cli/../../config/meta-agent.example.json config/meta-agent.json || cp config/meta-agent.example.json config/meta-agent.json
-OPENAI_API_KEY=unused-for-this-smoke node --experimental-strip-types --no-warnings packages/cli/src/bin.ts --yolo --config ./config/meta-agent.json <<EOF
+OPENAI_API_KEY=unused-for-this-smoke node --experimental-transform-types --no-warnings packages/cli/src/bin.ts --yolo --config ./config/meta-agent.json <<EOF
 /tools
 /exit
 EOF

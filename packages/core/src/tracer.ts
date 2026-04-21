@@ -10,14 +10,14 @@ export type TraceEvent = {
 };
 
 export class Tracer {
-  filename: string;
-  sessionId: string;
-  #stream: WriteStream;
+  readonly filename: string;
+  readonly sessionId: string;
+  private stream: WriteStream;
 
-  constructor(filename: string, sessionId: string, stream: WriteStream) {
+  private constructor(filename: string, sessionId: string, stream: WriteStream) {
     this.filename = filename;
     this.sessionId = sessionId;
-    this.#stream = stream;
+    this.stream = stream;
   }
 
   static async open(dir: string, sessionId: string): Promise<Tracer> {
@@ -35,12 +35,12 @@ export class Tracer {
       kind,
       data,
     };
-    this.#stream.write(JSON.stringify(event) + "\n");
+    this.stream.write(JSON.stringify(event) + "\n");
   }
 
   async close(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      this.#stream.end((err?: Error | null) => (err ? reject(err) : resolve()));
+      this.stream.end((err?: Error | null) => (err ? reject(err) : resolve()));
     });
   }
 }
