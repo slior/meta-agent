@@ -22,8 +22,8 @@
 |------|-------|--------|
 | 1 | Workspace Scaffold | ✅ complete (`d312ddd`) |
 | 2 | Shared Types and JSON Schemas | ✅ complete (`a236893`) |
-| 3 | Canonical JSON and Hashing | ⏳ in progress |
-| 4 | Tracer (JSONL Append-Only) | ⬜ pending |
+| 3 | Canonical JSON and Hashing | ✅ complete (`d9f5716`) |
+| 4 | Tracer (JSONL Append-Only) | ⏳ in progress |
 | 5 | Filesystem Tool Registry | ⬜ pending |
 | 6 | Hybrid Tool Index | ⬜ pending |
 | 7 | Tiered Approval Policy | ⬜ pending |
