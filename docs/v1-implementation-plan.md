@@ -25,8 +25,8 @@
 | 3 | Canonical JSON and Hashing | ✅ complete (`d9f5716`) |
 | 4 | Tracer (JSONL Append-Only) | ✅ complete (`65161c9`) |
 | 5 | Filesystem Tool Registry | ✅ complete (`4553741`) |
-| 6 | Hybrid Tool Index | ⏳ in progress |
-| 7 | Tiered Approval Policy | ⬜ pending |
+| 6 | Hybrid Tool Index | ✅ complete (`11f23dc`) |
+| 7 | Tiered Approval Policy | ⏳ in progress |
 | 8 | LLM Provider (OpenAI SDK + Mock) | ⬜ pending |
 | 9 | Sandbox Runner (Child-Side Bootstrap) | ⬜ pending |
 | 10 | NodePermissionSandbox (Parent-Side) | ⬜ pending |
