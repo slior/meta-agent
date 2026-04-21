@@ -7,6 +7,7 @@
 **Architecture:** Monorepo with two packages — `packages/core` (all mechanics, zero TTY deps) and `packages/cli` (demo REPL + approval TUI). Every major dimension (registry, index, sandbox, approval, LLM) sits behind an interface so future implementations can be swapped in.
 
 **Tech Stack:**
+
 - Node.js ≥ 22.7 (needs `--permission` and `--experimental-transform-types`; `--experimental-strip-types` is on by default from 22.6+ but does not handle TypeScript-only syntax like access modifiers, so transform-types is required)
 - TypeScript (source) run directly via Node type-stripping — no transpile step for generated tools
 - `openai` SDK for LLM calls (configurable `baseURL` → OpenAI/gateways/Ollama/vLLM)
@@ -18,25 +19,27 @@
 
 ## Execution Status
 
-| Task | Title | Status |
-|------|-------|--------|
-| 1 | Workspace Scaffold | ✅ complete (`d312ddd`) |
-| 2 | Shared Types and JSON Schemas | ✅ complete (`a236893`) |
-| 3 | Canonical JSON and Hashing | ✅ complete (`d9f5716`) |
-| 4 | Tracer (JSONL Append-Only) | ✅ complete (`65161c9`) |
-| 5 | Filesystem Tool Registry | ✅ complete (`4553741`) |
-| 6 | Hybrid Tool Index | ✅ complete (`11f23dc`) |
-| 7 | Tiered Approval Policy | ✅ complete (`1f3ea3f`) |
-| 8 | LLM Provider (OpenAI SDK + Mock) | ✅ complete (`e5ba4d5`) |
-| 9 | Sandbox Runner (Child-Side Bootstrap) | ✅ complete (`697e132`) |
-| 10 | NodePermissionSandbox (Parent-Side) | ✅ complete (`aa36aac`) |
-| 11 | Static Validator | ✅ complete (`46dd62b`) |
-| 12 | Tool Factory | ✅ complete (`6460f40`) |
-| 13 | Meta-Tools and System Prompt | ✅ complete (`c50ed1a`) |
-| 14 | Agent Loop | ⬜ pending |
-| 15 | CLI Config Loader and Approval TUI | ⬜ pending |
-| 16 | CLI REPL, /compose, and Bin Entry | ⬜ pending |
-| 17 | End-to-End Smoke Test with Mocked LLM | ⬜ pending |
+
+| Task | Title                                 | Status                 |
+| ---- | ------------------------------------- | ---------------------- |
+| 1    | Workspace Scaffold                    | ✅ complete (`d312ddd`) |
+| 2    | Shared Types and JSON Schemas         | ✅ complete (`a236893`) |
+| 3    | Canonical JSON and Hashing            | ✅ complete (`d9f5716`) |
+| 4    | Tracer (JSONL Append-Only)            | ✅ complete (`65161c9`) |
+| 5    | Filesystem Tool Registry              | ✅ complete (`4553741`) |
+| 6    | Hybrid Tool Index                     | ✅ complete (`11f23dc`) |
+| 7    | Tiered Approval Policy                | ✅ complete (`1f3ea3f`) |
+| 8    | LLM Provider (OpenAI SDK + Mock)      | ✅ complete (`e5ba4d5`) |
+| 9    | Sandbox Runner (Child-Side Bootstrap) | ✅ complete (`697e132`) |
+| 10   | NodePermissionSandbox (Parent-Side)   | ✅ complete (`aa36aac`) |
+| 11   | Static Validator                      | ✅ complete (`46dd62b`) |
+| 12   | Tool Factory                          | ✅ complete (`6460f40`) |
+| 13   | Meta-Tools and System Prompt          | ✅ complete (`c50ed1a`) |
+| 14   | Agent Loop                            | ✅ complete (`b6d740b`) |
+| 15   | CLI Config Loader and Approval TUI    | ✅ complete (`70af26b`) |
+| 16   | CLI REPL, /compose, and Bin Entry     | ✅ complete (`83407f3`) |
+| 17   | End-to-End Smoke Test with Mocked LLM | ✅ complete (`b7e121d`) |
+
 
 Legend: ⬜ pending · ⏳ in progress · ✅ complete
 
@@ -123,6 +126,7 @@ meta-agent/
 ## Task 1: Workspace Scaffold
 
 **Files:**
+
 - Create: `package.json`
 - Create: `tsconfig.base.json`
 - Create: `.gitignore`
@@ -133,14 +137,13 @@ meta-agent/
 - Create: `packages/cli/package.json`
 - Create: `packages/cli/tsconfig.json`
 - Create: `packages/cli/src/bin.ts`
-
-- [ ] **Step 1: Create `.nvmrc`**
+- **Step 1: Create `.nvmrc`**
 
 ```
 22.22.2
 ```
 
-- [ ] **Step 2: Create `.gitignore`**
+- **Step 2: Create `.gitignore`**
 
 ```
 node_modules/
@@ -154,7 +157,7 @@ traces/*.jsonl
 .env.local
 ```
 
-- [ ] **Step 3: Create root `package.json`**
+- **Step 3: Create root `package.json`**
 
 ```json
 {
@@ -175,7 +178,7 @@ traces/*.jsonl
 }
 ```
 
-- [ ] **Step 4: Create `tsconfig.base.json`**
+- **Step 4: Create `tsconfig.base.json`**
 
 ```json
 {
@@ -197,7 +200,7 @@ traces/*.jsonl
 }
 ```
 
-- [ ] **Step 5: Create `packages/core/package.json`**
+- **Step 5: Create `packages/core/package.json`**
 
 ```json
 {
@@ -219,7 +222,7 @@ traces/*.jsonl
 
 Note: the `'src/**/*.test.ts'` is single-quoted so the shell does not expand the glob; Node's `--test` flag expands `**` recursively and includes `.ts` files (which the default auto-discovery does not as of Node 22.6).
 
-- [ ] **Step 6: Create `packages/core/tsconfig.json`**
+- **Step 6: Create `packages/core/tsconfig.json`**
 
 ```json
 {
@@ -229,13 +232,13 @@ Note: the `'src/**/*.test.ts'` is single-quoted so the shell does not expand the
 }
 ```
 
-- [ ] **Step 7: Create `packages/core/src/index.ts`**
+- **Step 7: Create `packages/core/src/index.ts`**
 
 ```ts
 export const version = "0.1.0";
 ```
 
-- [ ] **Step 8: Create `packages/cli/package.json`**
+- **Step 8: Create `packages/cli/package.json`**
 
 ```json
 {
@@ -254,7 +257,7 @@ export const version = "0.1.0";
 }
 ```
 
-- [ ] **Step 9: Create `packages/cli/tsconfig.json`**
+- **Step 9: Create `packages/cli/tsconfig.json`**
 
 ```json
 {
@@ -266,7 +269,7 @@ export const version = "0.1.0";
 
 Note: no `references` — core cannot be a `composite` project while it also sets `noEmit: true`, and the workspace symlink at `node_modules/@meta-agent/core` plus `moduleResolution: Bundler` resolves the import at typecheck time.
 
-- [ ] **Step 10: Create `packages/cli/src/bin.ts`**
+- **Step 10: Create `packages/cli/src/bin.ts`**
 
 ```ts
 #!/usr/bin/env node
@@ -274,7 +277,7 @@ import { version } from "@meta-agent/core";
 console.log(`meta-agent v${version} — bin stub`);
 ```
 
-- [ ] **Step 11: Install and verify**
+- **Step 11: Install and verify**
 
 ```bash
 npm install
@@ -283,11 +286,12 @@ npm run cli
 ```
 
 Expected output from `npm run cli`:
+
 ```
 meta-agent v0.1.0 — bin stub
 ```
 
-- [ ] **Step 12: Commit**
+- **Step 12: Commit**
 
 ```bash
 git add -A
@@ -299,12 +303,12 @@ git commit -m "Task 1: scaffold npm workspaces, TS config, bin stub"
 ## Task 2: Shared Types and JSON Schemas
 
 **Files:**
+
 - Create: `packages/core/src/types.ts`
 - Create: `packages/core/src/schemas.ts`
 - Create: `packages/core/src/errors.ts`
 - Create: `packages/core/src/schemas.test.ts`
-
-- [ ] **Step 1: Create `packages/core/src/types.ts`**
+- **Step 1: Create `packages/core/src/types.ts`**
 
 ```ts
 export type Permissions = {
@@ -407,7 +411,7 @@ export type ToolSummary = {
 };
 ```
 
-- [ ] **Step 2: Create `packages/core/src/schemas.ts`**
+- **Step 2: Create `packages/core/src/schemas.ts`**
 
 ```ts
 export const PERMISSIONS_SCHEMA = {
@@ -475,7 +479,7 @@ export const TOOL_DRAFT_SCHEMA = {
 } as const;
 ```
 
-- [ ] **Step 3: Create `packages/core/src/errors.ts`**
+- **Step 3: Create `packages/core/src/errors.ts`**
 
 ```ts
 import type { ToolError, ToolErrorKind } from "./types.ts";
@@ -492,7 +496,7 @@ export function toolError(
 }
 ```
 
-- [ ] **Step 4: Write the failing test — `packages/core/src/schemas.test.ts`**
+- **Step 4: Write the failing test — `packages/core/src/schemas.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -550,13 +554,13 @@ test("TOOL_DRAFT_SCHEMA accepts a valid draft", () => {
 });
 ```
 
-- [ ] **Step 5: Add `ajv-formats` dependency**
+- **Step 5: Add `ajv-formats` dependency**
 
 ```bash
 cd packages/core && npm install ajv-formats@^3.0.1 && cd ../..
 ```
 
-- [ ] **Step 6: Run tests (verify they pass)**
+- **Step 6: Run tests (verify they pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -564,7 +568,7 @@ npm test -w @meta-agent/core
 
 Expected: 4 tests pass.
 
-- [ ] **Step 7: Typecheck**
+- **Step 7: Typecheck**
 
 ```bash
 npm run typecheck
@@ -572,7 +576,7 @@ npm run typecheck
 
 Expected: no errors.
 
-- [ ] **Step 8: Commit**
+- **Step 8: Commit**
 
 ```bash
 git add -A
@@ -584,10 +588,10 @@ git commit -m "Task 2: shared types, JSON schemas (manifest + draft), error fact
 ## Task 3: Canonical JSON and Hashing
 
 **Files:**
+
 - Create: `packages/core/src/hash.ts`
 - Create: `packages/core/src/hash.test.ts`
-
-- [ ] **Step 1: Write the failing test — `packages/core/src/hash.test.ts`**
+- **Step 1: Write the failing test — `packages/core/src/hash.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -623,7 +627,7 @@ test("hashTool produces sha256:<hex> format", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- **Step 2: Run test to verify it fails**
 
 ```bash
 npm test -w @meta-agent/core
@@ -631,7 +635,7 @@ npm test -w @meta-agent/core
 
 Expected: errors — cannot resolve `./hash.ts`.
 
-- [ ] **Step 3: Create `packages/core/src/hash.ts`**
+- **Step 3: Create `packages/core/src/hash.ts`**
 
 ```ts
 import { createHash } from "node:crypto";
@@ -661,7 +665,7 @@ export function hashTool(code: string, manifestWithoutHash: Omit<ToolManifest, "
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- **Step 4: Run tests to verify they pass**
 
 ```bash
 npm test -w @meta-agent/core
@@ -669,7 +673,7 @@ npm test -w @meta-agent/core
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add -A
@@ -681,10 +685,10 @@ git commit -m "Task 3: canonical JSON + sha256 tool hashing helper"
 ## Task 4: Tracer (JSONL Append-Only)
 
 **Files:**
+
 - Create: `packages/core/src/tracer.ts`
 - Create: `packages/core/src/tracer.test.ts`
-
-- [ ] **Step 1: Write the failing test**
+- **Step 1: Write the failing test**
 
 ```ts
 // packages/core/src/tracer.test.ts
@@ -735,7 +739,7 @@ test("Tracer.log is synchronous from caller's perspective but flushes on close",
 });
 ```
 
-- [ ] **Step 2: Run test (expect failure)**
+- **Step 2: Run test (expect failure)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -743,7 +747,7 @@ npm test -w @meta-agent/core
 
 Expected: cannot resolve `./tracer.ts`.
 
-- [ ] **Step 3: Create `packages/core/src/tracer.ts`**
+- **Step 3: Create `packages/core/src/tracer.ts`**
 
 ```ts
 import { createWriteStream, type WriteStream } from "node:fs";
@@ -794,7 +798,7 @@ export class Tracer {
 }
 ```
 
-- [ ] **Step 4: Run tests (expect pass)**
+- **Step 4: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -802,7 +806,7 @@ npm test -w @meta-agent/core
 
 Expected: both tests pass.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add -A
@@ -814,11 +818,11 @@ git commit -m "Task 4: JSONL append-only tracer"
 ## Task 5: Filesystem Tool Registry
 
 **Files:**
+
 - Create: `packages/core/src/registry/interface.ts`
 - Create: `packages/core/src/registry/fs-registry.ts`
 - Create: `packages/core/src/registry/fs-registry.test.ts`
-
-- [ ] **Step 1: Create the interface — `packages/core/src/registry/interface.ts`**
+- **Step 1: Create the interface — `packages/core/src/registry/interface.ts`**
 
 ```ts
 import type { ApprovalRecord, Tool, ToolSummary } from "../types.ts";
@@ -835,7 +839,7 @@ export interface ToolRegistry {
 }
 ```
 
-- [ ] **Step 2: Write the failing test — `packages/core/src/registry/fs-registry.test.ts`**
+- **Step 2: Write the failing test — `packages/core/src/registry/fs-registry.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -953,7 +957,7 @@ test("registry rehydrates from disk on reopen", async () => {
 });
 ```
 
-- [ ] **Step 3: Run test (expect failure)**
+- **Step 3: Run test (expect failure)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -961,7 +965,7 @@ npm test -w @meta-agent/core
 
 Expected: cannot resolve `./fs-registry.ts`.
 
-- [ ] **Step 4: Create `packages/core/src/registry/fs-registry.ts`**
+- **Step 4: Create `packages/core/src/registry/fs-registry.ts`**
 
 ```ts
 import { mkdir, readFile, writeFile, readdir, rm, stat } from "node:fs/promises";
@@ -1073,7 +1077,7 @@ export class FsToolRegistry implements ToolRegistry {
 }
 ```
 
-- [ ] **Step 5: Run tests (expect pass)**
+- **Step 5: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -1081,7 +1085,7 @@ npm test -w @meta-agent/core
 
 Expected: all 6 registry tests pass.
 
-- [ ] **Step 6: Commit**
+- **Step 6: Commit**
 
 ```bash
 git add -A
@@ -1093,11 +1097,11 @@ git commit -m "Task 5: FsToolRegistry with caching, dependents, cascade delete"
 ## Task 6: Hybrid Tool Index (Catalog + Substring/BM25-Lite Find)
 
 **Files:**
+
 - Create: `packages/core/src/index-store/interface.ts`
 - Create: `packages/core/src/index-store/hybrid-index.ts`
 - Create: `packages/core/src/index-store/hybrid-index.test.ts`
-
-- [ ] **Step 1: Create the interface — `packages/core/src/index-store/interface.ts`**
+- **Step 1: Create the interface — `packages/core/src/index-store/interface.ts`**
 
 ```ts
 import type { CatalogEntry, FindResult } from "../types.ts";
@@ -1108,7 +1112,7 @@ export interface ToolIndex {
 }
 ```
 
-- [ ] **Step 2: Write the failing test — `packages/core/src/index-store/hybrid-index.test.ts`**
+- **Step 2: Write the failing test — `packages/core/src/index-store/hybrid-index.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -1198,7 +1202,7 @@ test("catalog maxEntries truncates", async () => {
 });
 ```
 
-- [ ] **Step 3: Run test (expect failure)**
+- **Step 3: Run test (expect failure)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -1206,7 +1210,7 @@ npm test -w @meta-agent/core
 
 Expected: cannot resolve `./hybrid-index.ts`.
 
-- [ ] **Step 4: Create `packages/core/src/index-store/hybrid-index.ts`**
+- **Step 4: Create `packages/core/src/index-store/hybrid-index.ts`**
 
 ```ts
 import type { CatalogEntry, FindResult } from "../types.ts";
@@ -1309,7 +1313,7 @@ export class HybridToolIndex implements ToolIndex {
 
 Note: `catalog()` is synchronous by interface but registry `list()` is async. The implementation above throws if given a registry that isn't the FS one. To fix this cleanly, extend the registry interface to expose a synchronous snapshot.
 
-- [ ] **Step 5: Extend `ToolRegistry` with `listSync` — modify `packages/core/src/registry/interface.ts`**
+- **Step 5: Extend `ToolRegistry` with `listSync` — modify `packages/core/src/registry/interface.ts`**
 
 ```ts
 import type { ApprovalRecord, Tool, ToolSummary } from "../types.ts";
@@ -1328,7 +1332,7 @@ export interface ToolRegistry {
 }
 ```
 
-- [ ] **Step 6: Add `listSync` to `FsToolRegistry` — modify `packages/core/src/registry/fs-registry.ts`**
+- **Step 6: Add `listSync` to `FsToolRegistry` — modify `packages/core/src/registry/fs-registry.ts`**
 
 After the existing `list()` method, add:
 
@@ -1343,7 +1347,7 @@ After the existing `list()` method, add:
   }
 ```
 
-- [ ] **Step 7: Update `StubRegistry` in test and rewrite `catalog()`**
+- **Step 7: Update `StubRegistry` in test and rewrite `catalog()`**
 
 In `packages/core/src/index-store/hybrid-index.test.ts`, add to the `StubRegistry` class:
 
@@ -1369,7 +1373,7 @@ Replace the `catalog()` method in `packages/core/src/index-store/hybrid-index.ts
   }
 ```
 
-- [ ] **Step 8: Run tests (expect pass)**
+- **Step 8: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -1377,7 +1381,7 @@ npm test -w @meta-agent/core
 
 Expected: all 5 index tests pass; previous tests still pass.
 
-- [ ] **Step 9: Commit**
+- **Step 9: Commit**
 
 ```bash
 git add -A
@@ -1389,11 +1393,11 @@ git commit -m "Task 6: hybrid tool index (sync catalog + BM25-lite find), listSy
 ## Task 7: Tiered Approval Policy
 
 **Files:**
+
 - Create: `packages/core/src/approval/interface.ts`
 - Create: `packages/core/src/approval/tiered-policy.ts`
 - Create: `packages/core/src/approval/tiered-policy.test.ts`
-
-- [ ] **Step 1: Create the interface — `packages/core/src/approval/interface.ts`**
+- **Step 1: Create the interface — `packages/core/src/approval/interface.ts`**
 
 ```ts
 import type { ApprovalRecord, ApprovalToken, Tool, ToolDraft, ToolResult } from "../types.ts";
@@ -1420,7 +1424,7 @@ export interface ApprovalPolicy {
 }
 ```
 
-- [ ] **Step 2: Write the failing test — `packages/core/src/approval/tiered-policy.test.ts`**
+- **Step 2: Write the failing test — `packages/core/src/approval/tiered-policy.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -1514,7 +1518,7 @@ test("yolo mode auto-approves everything without prompting", async () => {
 });
 ```
 
-- [ ] **Step 3: Create `packages/core/src/approval/tiered-policy.ts`**
+- **Step 3: Create `packages/core/src/approval/tiered-policy.ts`**
 
 ```ts
 import type { ApprovalRecord, ApprovalToken, Permissions, Tool, ToolDraft, ToolResult } from "../types.ts";
@@ -1590,7 +1594,7 @@ function newToken(): ApprovalToken {
 }
 ```
 
-- [ ] **Step 4: Run tests (expect pass)**
+- **Step 4: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -1598,7 +1602,7 @@ npm test -w @meta-agent/core
 
 Expected: all 8 approval tests pass.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add -A
@@ -1610,12 +1614,12 @@ git commit -m "Task 7: tiered approval policy (risk tiering, session cache, yolo
 ## Task 8: LLM Provider (OpenAI SDK + Mock)
 
 **Files:**
+
 - Create: `packages/core/src/llm/interface.ts`
 - Create: `packages/core/src/llm/openai-provider.ts`
 - Create: `packages/core/src/llm/mock-provider.ts`
 - Create: `packages/core/src/llm/mock-provider.test.ts`
-
-- [ ] **Step 1: Create the interface — `packages/core/src/llm/interface.ts`**
+- **Step 1: Create the interface — `packages/core/src/llm/interface.ts`**
 
 ```ts
 export type ChatMessage =
@@ -1662,7 +1666,7 @@ export interface LLMProvider {
 }
 ```
 
-- [ ] **Step 2: Create `packages/core/src/llm/openai-provider.ts`**
+- **Step 2: Create `packages/core/src/llm/openai-provider.ts`**
 
 ```ts
 import OpenAI from "openai";
@@ -1741,7 +1745,7 @@ export class OpenAIProvider implements LLMProvider {
 
 Note: `ChatCompletionCreateParamsNonStreaming` is imported explicitly so `.choices`/`.usage` on the response aren't unioned away by the streaming-param branch. Under `exactOptionalPropertyTypes: true`, optional keys use conditional spreads rather than assigning `undefined`.
 
-- [ ] **Step 3: Create `packages/core/src/llm/mock-provider.ts`**
+- **Step 3: Create `packages/core/src/llm/mock-provider.ts`**
 
 ```ts
 import type { ChatRequest, ChatResponse, LLMProvider, StructuredRequest } from "./interface.ts";
@@ -1775,7 +1779,7 @@ export class MockLLMProvider implements LLMProvider {
 }
 ```
 
-- [ ] **Step 4: Write the failing test — `packages/core/src/llm/mock-provider.test.ts`**
+- **Step 4: Write the failing test — `packages/core/src/llm/mock-provider.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -1803,7 +1807,7 @@ test("MockLLMProvider throws when out of handlers", async () => {
 });
 ```
 
-- [ ] **Step 5: Run tests (expect pass)**
+- **Step 5: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -1811,7 +1815,7 @@ npm test -w @meta-agent/core
 
 Expected: 3 new mock tests pass.
 
-- [ ] **Step 6: Typecheck**
+- **Step 6: Typecheck**
 
 ```bash
 npm run typecheck
@@ -1819,7 +1823,7 @@ npm run typecheck
 
 Expected: no errors.
 
-- [ ] **Step 7: Commit**
+- **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1833,12 +1837,12 @@ git commit -m "Task 8: LLMProvider interface + OpenAIProvider (openai SDK) + Moc
 The runner is a TypeScript entry point executed inside each sandboxed child process. It imports the target tool, reads args from stdin, writes a result to stdout, and handles `invokeTool` RPC messages.
 
 **Files:**
+
 - Create: `packages/core/src/sandbox/runner.ts`
 - Create: `packages/core/src/sandbox/runner.test.ts`
 - Create: `packages/core/src/sandbox/fixtures/ok-tool.ts` (test fixture)
 - Create: `packages/core/src/sandbox/fixtures/throws-tool.ts` (test fixture)
-
-- [ ] **Step 1: Create `packages/core/src/sandbox/runner.ts`**
+- **Step 1: Create `packages/core/src/sandbox/runner.ts`**
 
 ```ts
 import { pathToFileURL } from "node:url";
@@ -1941,7 +1945,7 @@ async function main() {
 main();
 ```
 
-- [ ] **Step 2: Create fixture — `packages/core/src/sandbox/fixtures/ok-tool.ts`**
+- **Step 2: Create fixture — `packages/core/src/sandbox/fixtures/ok-tool.ts`**
 
 ```ts
 export async function run(input: { x: number }): Promise<{ doubled: number }> {
@@ -1949,7 +1953,7 @@ export async function run(input: { x: number }): Promise<{ doubled: number }> {
 }
 ```
 
-- [ ] **Step 3: Create fixture — `packages/core/src/sandbox/fixtures/throws-tool.ts`**
+- **Step 3: Create fixture — `packages/core/src/sandbox/fixtures/throws-tool.ts`**
 
 ```ts
 export async function run(_input: unknown): Promise<never> {
@@ -1957,7 +1961,7 @@ export async function run(_input: unknown): Promise<never> {
 }
 ```
 
-- [ ] **Step 4: Write the failing test — `packages/core/src/sandbox/runner.test.ts`**
+- **Step 4: Write the failing test — `packages/core/src/sandbox/runner.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -2010,7 +2014,7 @@ test("runner surfaces thrown errors as runtime_error", async () => {
 });
 ```
 
-- [ ] **Step 5: Run tests (expect pass)**
+- **Step 5: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -2018,7 +2022,7 @@ npm test -w @meta-agent/core
 
 Expected: 2 runner tests pass.
 
-- [ ] **Step 6: Commit**
+- **Step 6: Commit**
 
 ```bash
 git add -A
@@ -2030,13 +2034,13 @@ git commit -m "Task 9: sandbox runner (child-side bootstrap + invokeTool RPC + n
 ## Task 10: NodePermissionSandbox (Parent-Side)
 
 **Files:**
+
 - Create: `packages/core/src/sandbox/interface.ts`
 - Create: `packages/core/src/sandbox/node-permission-sandbox.ts`
 - Create: `packages/core/src/sandbox/node-permission-sandbox.test.ts`
 - Create: `packages/core/src/sandbox/fixtures/write-tool.ts`
 - Create: `packages/core/src/sandbox/fixtures/slow-tool.ts`
-
-- [ ] **Step 1: Create the interface — `packages/core/src/sandbox/interface.ts`**
+- **Step 1: Create the interface — `packages/core/src/sandbox/interface.ts`**
 
 ```ts
 import type { ApprovalToken, Tool, ToolResult } from "../types.ts";
@@ -2054,7 +2058,7 @@ export interface Sandbox {
 }
 ```
 
-- [ ] **Step 2: Create fixture — `packages/core/src/sandbox/fixtures/write-tool.ts`**
+- **Step 2: Create fixture — `packages/core/src/sandbox/fixtures/write-tool.ts`**
 
 ```ts
 import { writeFile } from "node:fs/promises";
@@ -2064,7 +2068,7 @@ export async function run(input: { path: string; content: string }): Promise<{ w
 }
 ```
 
-- [ ] **Step 3: Create fixture — `packages/core/src/sandbox/fixtures/slow-tool.ts`**
+- **Step 3: Create fixture — `packages/core/src/sandbox/fixtures/slow-tool.ts`**
 
 ```ts
 export async function run(_input: unknown): Promise<never> {
@@ -2073,7 +2077,7 @@ export async function run(_input: unknown): Promise<never> {
 }
 ```
 
-- [ ] **Step 4: Write the failing test — `packages/core/src/sandbox/node-permission-sandbox.test.ts`**
+- **Step 4: Write the failing test — `packages/core/src/sandbox/node-permission-sandbox.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -2159,7 +2163,7 @@ test("sandbox enforces depth cap on invokeTool recursion", async () => {
 });
 ```
 
-- [ ] **Step 5: Create `packages/core/src/sandbox/node-permission-sandbox.ts`**
+- **Step 5: Create `packages/core/src/sandbox/node-permission-sandbox.ts`**
 
 ```ts
 import { spawn } from "node:child_process";
@@ -2325,7 +2329,7 @@ export class NodePermissionSandbox implements Sandbox {
 }
 ```
 
-- [ ] **Step 6: Run tests (expect pass)**
+- **Step 6: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -2336,10 +2340,10 @@ Expected: 5 sandbox tests pass. (If the fs-write blocking test is flaky across N
 **Implementation notes from Task 10 execution (deviations from the plan above):**
 
 1. **Per-path `--allow-fs-*` flags, not comma-separated.** Node 22.22.2 only honors the first path in a comma-joined value empirically (despite the docs). The implementation emits one `--allow-fs-read=<path>` / `--allow-fs-write=<path>` flag per path.
-2. **`dirname(RUNNER_PATH)` is added to the read allowlist.** The child must be able to `import` the runner itself; the workspace/tool dirs usually do not contain it.
+2. `**dirname(RUNNER_PATH)` is added to the read allowlist.** The child must be able to `import` the runner itself; the workspace/tool dirs usually do not contain it.
 3. **Node's `--permission` denials surface as thrown `ERR_ACCESS_DENIED`**, which bubble up as `runtime_error` from the runner (not as a distinct `permission_denied` kind from the sandbox). The test already accepts either; downstream code should not rely on the `permission_denied` kind for sandbox-origin denials.
 
-- [ ] **Step 7: Commit**
+- **Step 7: Commit**
 
 ```bash
 git add -A
@@ -2351,10 +2355,10 @@ git commit -m "Task 10: NodePermissionSandbox (child_process + --permission + in
 ## Task 11: Static Validator (Imports + Deps/Calls Match)
 
 **Files:**
+
 - Create: `packages/core/src/factory/static-validator.ts`
 - Create: `packages/core/src/factory/static-validator.test.ts`
-
-- [ ] **Step 1: Write the failing test — `packages/core/src/factory/static-validator.test.ts`**
+- **Step 1: Write the failing test — `packages/core/src/factory/static-validator.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -2455,7 +2459,7 @@ test("atomic tool must not contain invokeTool calls", () => {
 });
 ```
 
-- [ ] **Step 2: Create `packages/core/src/factory/static-validator.ts`**
+- **Step 2: Create `packages/core/src/factory/static-validator.ts`**
 
 ```ts
 import type { ToolDraft } from "../types.ts";
@@ -2556,7 +2560,7 @@ export function staticValidateDraft(draft: ToolDraft, ctx: ValidationContext): V
 }
 ```
 
-- [ ] **Step 3: Run tests (expect pass)**
+- **Step 3: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -2564,7 +2568,7 @@ npm test -w @meta-agent/core
 
 Expected: all 11 static-validator tests pass.
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add -A
@@ -2576,11 +2580,11 @@ git commit -m "Task 11: static validator (imports allowlist, deps/calls match, b
 ## Task 12: Tool Factory (Code-Gen → Validate → Smoke → Approval → Save)
 
 **Files:**
+
 - Create: `packages/core/src/factory/code-gen-prompts.ts`
 - Create: `packages/core/src/factory/factory.ts`
 - Create: `packages/core/src/factory/factory.test.ts`
-
-- [ ] **Step 1: Create `packages/core/src/factory/code-gen-prompts.ts`**
+- **Step 1: Create `packages/core/src/factory/code-gen-prompts.ts`**
 
 ```ts
 import type { ToolSummary } from "../types.ts";
@@ -2657,7 +2661,7 @@ Produce a corrected ToolDraft matching the schema.`;
 }
 ```
 
-- [ ] **Step 2: Create `packages/core/src/factory/factory.ts`**
+- **Step 2: Create `packages/core/src/factory/factory.ts`**
 
 ```ts
 import type { ApprovalPolicy } from "../approval/interface.ts";
@@ -2847,7 +2851,7 @@ export class ToolFactory {
 }
 ```
 
-- [ ] **Step 3: Write the failing test — `packages/core/src/factory/factory.test.ts`**
+- **Step 3: Write the failing test — `packages/core/src/factory/factory.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -2941,7 +2945,7 @@ test("factory: rejected by reviewer returns failure", async () => {
 });
 ```
 
-- [ ] **Step 4: Run tests (expect pass)**
+- **Step 4: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -2949,7 +2953,7 @@ npm test -w @meta-agent/core
 
 Expected: 3 factory tests pass.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add -A
@@ -2961,11 +2965,11 @@ git commit -m "Task 12: ToolFactory (code-gen sub-call → static → smoke → 
 ## Task 13: Meta-Tools and System Prompt
 
 **Files:**
+
 - Create: `packages/core/src/agent/meta-tools.ts`
 - Create: `packages/core/src/agent/system-prompt.ts`
 - Create: `packages/core/src/agent/meta-tools.test.ts`
-
-- [ ] **Step 1: Create `packages/core/src/agent/meta-tools.ts`**
+- **Step 1: Create `packages/core/src/agent/meta-tools.ts`**
 
 ```ts
 import type { ToolDef } from "../llm/interface.ts";
@@ -3070,7 +3074,7 @@ export const META_TOOL_DEFS: ToolDef[] = [
 export const META_TOOL_NAMES = new Set(META_TOOL_DEFS.map((t) => t.function.name));
 ```
 
-- [ ] **Step 2: Create `packages/core/src/agent/system-prompt.ts`**
+- **Step 2: Create `packages/core/src/agent/system-prompt.ts`**
 
 ```ts
 import type { CatalogEntry } from "../types.ts";
@@ -3102,7 +3106,7 @@ ${list || "(none yet)"}${elided}
 }
 ```
 
-- [ ] **Step 3: Write the failing test — `packages/core/src/agent/meta-tools.test.ts`**
+- **Step 3: Write the failing test — `packages/core/src/agent/meta-tools.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -3145,7 +3149,7 @@ test("renderSystemPrompt elides and hints when over maxCatalogShown", () => {
 });
 ```
 
-- [ ] **Step 4: Run tests (expect pass)**
+- **Step 4: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -3153,7 +3157,7 @@ npm test -w @meta-agent/core
 
 Expected: 4 new tests pass.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add -A
@@ -3165,11 +3169,11 @@ git commit -m "Task 13: meta-tool definitions + system-prompt renderer"
 ## Task 14: Agent Loop
 
 **Files:**
+
 - Create: `packages/core/src/agent/agent-loop.ts`
 - Create: `packages/core/src/agent/agent-loop.test.ts`
 - Modify: `packages/core/src/index.ts` (export surface)
-
-- [ ] **Step 1: Create `packages/core/src/agent/agent-loop.ts`**
+- **Step 1: Create `packages/core/src/agent/agent-loop.ts`**
 
 ```ts
 import Ajv from "ajv";
@@ -3358,11 +3362,11 @@ function firstSentence(desc: string, max: number): string {
 ```
 
 **Notes on the fixes applied above (vs. naive versions):**
+
 - `registeredToolsForTurn` is async and uses the public `registry.get()` — no reaching into private caches.
 - `depth` is threaded from the top-level `run` into every `dispatchTool`, and incremented when `onInvokeTool` recurses, so the sandbox's `maxDepth` check is meaningful for composite recursion initiated from the agent.
 - `onToolInvoked` callback lets external observers (e.g., the CLI's `/compose` tracker) see tool invocations without wrapping the `Tracer` class.
-
-- [ ] **Step 2: Update `packages/core/src/index.ts` to export the public surface**
+- **Step 2: Update `packages/core/src/index.ts` to export the public surface**
 
 ```ts
 export const version = "0.1.0";
@@ -3389,7 +3393,7 @@ export { renderSystemPrompt } from "./agent/system-prompt.ts";
 export { AgentLoop } from "./agent/agent-loop.ts";
 ```
 
-- [ ] **Step 3: Write the failing test — `packages/core/src/agent/agent-loop.test.ts`**
+- **Step 3: Write the failing test — `packages/core/src/agent/agent-loop.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -3487,7 +3491,7 @@ test("agent: propose_new_tool requires find_tool first", async () => {
 });
 ```
 
-- [ ] **Step 4: Run tests (expect pass)**
+- **Step 4: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -3495,7 +3499,7 @@ npm test -w @meta-agent/core
 
 Expected: 3 new agent-loop tests pass.
 
-- [ ] **Step 5: Typecheck**
+- **Step 5: Typecheck**
 
 ```bash
 npm run typecheck
@@ -3503,7 +3507,7 @@ npm run typecheck
 
 Expected: no errors.
 
-- [ ] **Step 6: Commit**
+- **Step 6: Commit**
 
 ```bash
 git add -A
@@ -3515,12 +3519,12 @@ git commit -m "Task 14: AgentLoop with meta-tool dispatch + registry-backed tool
 ## Task 15: CLI Config Loader and Approval TUI
 
 **Files:**
+
 - Create: `packages/cli/src/config.ts`
 - Create: `packages/cli/src/approval-tui.ts`
 - Create: `packages/cli/src/config.test.ts`
 - Create: `config/meta-agent.example.json`
-
-- [ ] **Step 1: Create `config/meta-agent.example.json`**
+- **Step 1: Create `config/meta-agent.example.json`**
 
 ```json
 {
@@ -3542,7 +3546,7 @@ git commit -m "Task 14: AgentLoop with meta-tool dispatch + registry-backed tool
 }
 ```
 
-- [ ] **Step 2: Create `packages/cli/src/config.ts`**
+- **Step 2: Create `packages/cli/src/config.ts`**
 
 ```ts
 import { readFile } from "node:fs/promises";
@@ -3583,7 +3587,7 @@ function abs(p: string, base: string): string {
 }
 ```
 
-- [ ] **Step 3: Create `packages/cli/src/approval-tui.ts`**
+- **Step 3: Create `packages/cli/src/approval-tui.ts`**
 
 ```ts
 import readline from "node:readline/promises";
@@ -3644,7 +3648,7 @@ export class CliApprovalPrompter implements ApprovalPrompter {
 }
 ```
 
-- [ ] **Step 4: Write the failing test — `packages/cli/src/config.test.ts`**
+- **Step 4: Write the failing test — `packages/cli/src/config.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -3681,7 +3685,7 @@ test("loadConfig fails on missing llm.model", async () => {
 });
 ```
 
-- [ ] **Step 5: Run tests (expect pass)**
+- **Step 5: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/cli
@@ -3689,7 +3693,7 @@ npm test -w @meta-agent/cli
 
 Expected: 2 config tests pass.
 
-- [ ] **Step 6: Typecheck**
+- **Step 6: Typecheck**
 
 ```bash
 npm run typecheck
@@ -3697,7 +3701,7 @@ npm run typecheck
 
 Expected: no errors.
 
-- [ ] **Step 7: Commit**
+- **Step 7: Commit**
 
 ```bash
 git add -A
@@ -3709,11 +3713,11 @@ git commit -m "Task 15: CLI config loader + approval TUI prompter"
 ## Task 16: CLI REPL, /compose, and Bin Entry
 
 **Files:**
+
 - Create: `packages/cli/src/compose.ts`
 - Create: `packages/cli/src/repl.ts`
 - Modify: `packages/cli/src/bin.ts`
-
-- [ ] **Step 1: Create `packages/cli/src/compose.ts`**
+- **Step 1: Create `packages/cli/src/compose.ts`**
 
 Minimal reactive-compose CLI path. Tracks tool invocations during a session and, on `/compose`, prompts the user to describe a new composite and hands off to the factory.
 
@@ -3757,7 +3761,7 @@ export async function runComposeInteraction(
 }
 ```
 
-- [ ] **Step 2: Create `packages/cli/src/repl.ts`**
+- **Step 2: Create `packages/cli/src/repl.ts`**
 
 ```ts
 import readline from "node:readline/promises";
@@ -3826,7 +3830,7 @@ export async function runRepl(config: Config): Promise<void> {
 }
 ```
 
-- [ ] **Step 3: Replace `packages/cli/src/bin.ts`**
+- **Step 3: Replace `packages/cli/src/bin.ts`**
 
 ```ts
 #!/usr/bin/env node
@@ -3854,7 +3858,7 @@ main().catch((e) => {
 });
 ```
 
-- [ ] **Step 4: Typecheck**
+- **Step 4: Typecheck**
 
 ```bash
 npm run typecheck
@@ -3862,7 +3866,7 @@ npm run typecheck
 
 Expected: no errors.
 
-- [ ] **Step 5: Smoke-run the bin (with yolo and a mock model, no real API call)**
+- **Step 5: Smoke-run the bin (with yolo and a mock model, no real API call)**
 
 This step is a manual sanity check; we do not assert specific output. Create a minimal config and start the REPL, type `/tools` to confirm it lists nothing, then `/exit`.
 
@@ -3877,7 +3881,7 @@ EOF
 
 Expected: you see `[]` printed after `/tools` and the REPL exits. If the OpenAI SDK complains about a bad key before we issue any request, that's fine — we haven't called it.
 
-- [ ] **Step 6: Commit**
+- **Step 6: Commit**
 
 ```bash
 git add -A
@@ -3891,9 +3895,9 @@ git commit -m "Task 16: CLI REPL, /compose handler, and bin entry with config lo
 This task verifies the entire pipeline: tool creation through the factory, execution through the sandbox, and composite orchestration — all with a fully mocked LLM, so no network or API key is required in CI.
 
 **Files:**
-- Create: `packages/core/src/e2e.test.ts`
 
-- [ ] **Step 1: Write the failing test — `packages/core/src/e2e.test.ts`**
+- Create: `packages/core/src/e2e.test.ts`
+- **Step 1: Write the failing test — `packages/core/src/e2e.test.ts`**
 
 ```ts
 import { test } from "node:test";
@@ -4016,7 +4020,7 @@ test("E2E: composite invokeTool runs with no ambient authority (depth 1 inner ca
 });
 ```
 
-- [ ] **Step 2: Run tests (expect pass)**
+- **Step 2: Run tests (expect pass)**
 
 ```bash
 npm test -w @meta-agent/core
@@ -4024,7 +4028,7 @@ npm test -w @meta-agent/core
 
 Expected: 2 E2E tests pass. Because they spawn real subprocesses, they will be slower than the unit tests.
 
-- [ ] **Step 3: Run the full test suite across workspaces**
+- **Step 3: Run the full test suite across workspaces**
 
 ```bash
 npm test
@@ -4033,7 +4037,7 @@ npm run typecheck
 
 Expected: all tests pass, no type errors.
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add -A
@@ -4045,6 +4049,7 @@ git commit -m "Task 17: E2E tests — agent creates tool, invokes it, composite 
 ## Post-Implementation: README
 
 After all 17 tasks are complete, write a minimal README at the repo root describing:
+
 - Prerequisites (Node ≥ 22.6, OpenAI-compatible API key).
 - Setup (`npm install`, copy example config, export API key env var).
 - Running the REPL (`npm run cli`).
@@ -4076,8 +4081,10 @@ Before handing this plan off for execution, verify:
 - Open questions (spec §13): POC defaults adopted.
 
 **Type consistency check:**
+
 - `ToolDraft`, `ToolManifest`, `ApprovalRecord`, `ToolResult`, `CatalogEntry`, `FindResult`, `ToolSummary` are defined once in Task 2 and referenced throughout.
 - `ToolRegistry` interface gets `listSync` added in Task 6 and is honored by `FsToolRegistry` and the test stub.
 - `ApprovalPrompter.promptGate1`/`promptGate23` signatures match `CliApprovalPrompter` in Task 15.
 - `InvokeToolHandler` type from Task 10 matches `onInvokeTool` usage in Task 14 (`async (name, args) => dispatchTool(name, args, task)`).
 - `LLMProvider.generateStructured` signature matches usage in `ToolFactory` (Task 12) and `MockLLMProvider` (Task 8).
+
