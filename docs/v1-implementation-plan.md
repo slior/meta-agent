@@ -32,7 +32,7 @@
 | 10 | NodePermissionSandbox (Parent-Side) | ✅ complete (`aa36aac`) |
 | 11 | Static Validator | ✅ complete (`46dd62b`) |
 | 12 | Tool Factory | ✅ complete (`6460f40`) |
-| 13 | Meta-Tools and System Prompt | ⬜ pending |
+| 13 | Meta-Tools and System Prompt | ✅ complete (`c50ed1a`) |
 | 14 | Agent Loop | ⬜ pending |
 | 15 | CLI Config Loader and Approval TUI | ⬜ pending |
 | 16 | CLI REPL, /compose, and Bin Entry | ⬜ pending |

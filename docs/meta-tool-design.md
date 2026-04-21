@@ -97,15 +97,17 @@ flowchart TB
     AP -.implements.- TAP
 ```
 
+
+
 **Component responsibilities:**
 
-- **`AgentLoop`** — owns the conversation state, assembles the tool catalog for the system prompt, calls the LLM, dispatches tool calls, logs events. Knows nothing about filesystems, subprocesses, or prompts — depends only on the five interfaces.
-- **`ToolRegistry`** — CRUD over tools (load, save, delete, get by name, list, dependency lookup). Default = filesystem under `./tools/<name>/{tool.ts, manifest.json, approval.json}`.
-- **`ToolIndex`** — answers "given a natural-language query, which existing tools are relevant?" Default = hybrid (always-on mini-catalog in prompt + `find_tool` meta-tool using substring/BM25-lite over manifest text). Embedding-based implementation pluggable behind the same interface (Section 10).
-- **`Sandbox`** — given tool name, args, and manifest, runs the tool in a subprocess with Node `--permission` flags derived from the manifest; returns a structured `{ok, value} | {ok:false, error}`.
-- **`ApprovalPolicy`** — single interface called at all three gates (creation, first execution, subsequent execution); tiered default policy decides whether to prompt, auto-approve, or auto-deny based on permission risk level and cached prior decisions keyed by code+manifest hash.
-- **`ToolFactory`** — the workflow that turns a "tool gap" signal into an approved tool in the registry: LLM code-gen → static validation → sandboxed smoke test → Gate 1 approval → registry write. Used for both greenfield tools and composite tools.
-- **`Tracer`** — append-only JSONL log of every LLM turn, tool call, approval decision, and creation event.
+- `**AgentLoop`** — owns the conversation state, assembles the tool catalog for the system prompt, calls the LLM, dispatches tool calls, logs events. Knows nothing about filesystems, subprocesses, or prompts — depends only on the five interfaces.
+- `**ToolRegistry**` — CRUD over tools (load, save, delete, get by name, list, dependency lookup). Default = filesystem under `./tools/<name>/{tool.ts, manifest.json, approval.json}`.
+- `**ToolIndex**` — answers "given a natural-language query, which existing tools are relevant?" Default = hybrid (always-on mini-catalog in prompt + `find_tool` meta-tool using substring/BM25-lite over manifest text). Embedding-based implementation pluggable behind the same interface (Section 10).
+- `**Sandbox**` — given tool name, args, and manifest, runs the tool in a subprocess with Node `--permission` flags derived from the manifest; returns a structured `{ok, value} | {ok:false, error}`.
+- `**ApprovalPolicy**` — single interface called at all three gates (creation, first execution, subsequent execution); tiered default policy decides whether to prompt, auto-approve, or auto-deny based on permission risk level and cached prior decisions keyed by code+manifest hash.
+- `**ToolFactory**` — the workflow that turns a "tool gap" signal into an approved tool in the registry: LLM code-gen → static validation → sandboxed smoke test → Gate 1 approval → registry write. Used for both greenfield tools and composite tools.
+- `**Tracer**` — append-only JSONL log of every LLM turn, tool call, approval decision, and creation event.
 
 **Why these specific seams:** each interface corresponds to a dimension likely to evolve independently. You can swap the registry for SQLite without touching anything else; swap the index for embeddings without touching the sandbox; swap the approval policy for a web UI without touching the agent loop. The seams are chosen so that *changes* stay local.
 
@@ -151,6 +153,8 @@ sequenceDiagram
     end
 ```
 
+
+
 ### 4.1 Triggering
 
 The agent decides to author a tool by emitting a meta-tool call `propose_new_tool({intent, rationale, existingToolsConsidered})` from the main agent loop. This is one of a small set of **always-available meta-tools** in the system prompt (alongside `find_tool`, `invoke_tool`, `list_tools`, `propose_composite_tool`, `save_sequence_as_tool`, `stop`).
@@ -163,17 +167,19 @@ Crucially, the main agent does **not** write the tool's code directly in its tur
 
 What the factory's specialized code-gen sub-call must return as structured output:
 
-| Field | Purpose |
-|---|---|
-| `name` (kebab-case, unique) | Stable identifier. |
-| `description` | One-sentence capability summary; also used by `ToolIndex` for search. |
-| `inputSchema` (JSON Schema) | The contract callers must satisfy. |
-| `outputShape` (JSON Schema) | Return-value contract; keeps composites type-aware. |
-| `permissions` | Declarative manifest: `fsRead: string[]`, `fsWrite: string[]`, `net: 'none' \| 'allowlist'`, `netAllowlist: string[]`, `env: string[]`. Defaults = deny-all. |
-| `code` | Full contents of `tool.ts`. Must export `run(input)`. |
-| `dependencies` (composites only) | Names of tools this one calls via `invokeTool`. |
-| `smokeTestInput` | A concrete input example the LLM believes is valid. |
-| `rationale` | Why this tool is needed; shown to the reviewer at Gate 1. |
+
+| Field                            | Purpose                                                                                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name` (kebab-case, unique)      | Stable identifier.                                                                                                                                          |
+| `description`                    | One-sentence capability summary; also used by `ToolIndex` for search.                                                                                       |
+| `inputSchema` (JSON Schema)      | The contract callers must satisfy.                                                                                                                          |
+| `outputShape` (JSON Schema)      | Return-value contract; keeps composites type-aware.                                                                                                         |
+| `permissions`                    | Declarative manifest: `fsRead: string[]`, `fsWrite: string[]`, `net: 'none' | 'allowlist'`, `netAllowlist: string[]`, `env: string[]`. Defaults = deny-all. |
+| `code`                           | Full contents of `tool.ts`. Must export `run(input)`.                                                                                                       |
+| `dependencies` (composites only) | Names of tools this one calls via `invokeTool`.                                                                                                             |
+| `smokeTestInput`                 | A concrete input example the LLM believes is valid.                                                                                                         |
+| `rationale`                      | Why this tool is needed; shown to the reviewer at Gate 1.                                                                                                   |
+
 
 ### 4.3 Static validation (pre-smoke-test, cheap checks)
 
@@ -279,6 +285,8 @@ sequenceDiagram
     end
 ```
 
+
+
 ### 5.1 Sandbox invocation details
 
 **Command shape.** The parent spawns, argv-based (no shell):
@@ -331,9 +339,9 @@ Given a tool `T` with hash `h` and permissions `p`:
 
 1. If `approval.json` shows `h` approved with the same `p` *and* the reviewer previously selected "always approve for this tool" → **auto-approve** (Gate 3 fast path).
 2. Else, compute **risk tier** from `p`:
-   - **low** — reads within workspace only; no writes; no net; no env.
-   - **medium** — writes within workspace; no net; env reads of non-sensitive-named vars.
-   - **elevated** — any net, any fs outside workspace, any env containing `TOKEN|KEY|SECRET|PASS` patterns.
+  - **low** — reads within workspace only; no writes; no net; no env.
+  - **medium** — writes within workspace; no net; env reads of non-sensitive-named vars.
+  - **elevated** — any net, any fs outside workspace, any env containing `TOKEN|KEY|SECRET|PASS` patterns.
 3. **low** → auto-approve, log only.
 4. **medium** → prompt once per session (or per hash), cache for the session.
 5. **elevated** → prompt every time *unless* the reviewer explicitly chose "always allow" at Gate 1.
@@ -497,6 +505,8 @@ flowchart LR
     Flow --> Reg[Registry]
 ```
 
+
+
 What the user sees when `/compose` fires:
 
 ```
@@ -622,15 +632,17 @@ The mini-catalog in the system prompt is *hints* — tools are only formally reg
 
 ### 8.5 Meta-tools (always registered; implemented in `AgentLoop.dispatch`, never sandboxed)
 
-| Meta-tool | Purpose |
-|---|---|
-| `find_tool(query, k?)` | Layer-2 search in the tool index. |
-| `list_tools()` | Full catalog dump; used sparingly when the mini-catalog was truncated. |
-| `invoke_tool(name, args)` | Explicit invocation path; alternative to letting the LLM pick from registered tools directly. |
-| `propose_new_tool(intent, rationale, existingToolsConsidered?)` | Triggers `ToolFactory` creation flow (Section 4). Factory runs a specialized code-gen sub-call to produce the `ToolDraft`. Requires ≥ 1 `find_tool` call this task. |
-| `propose_composite_tool(name, intent, plannedSteps)` | Same flow as above, composite flavor. Factory's sub-call uses a composite-oriented code-gen prompt and expects `invokeTool(...)` call sites rather than novel implementation logic. |
-| `save_sequence_as_tool(sliceRef, name, intent)` | Reactive composition (also callable from CLI via `/compose`). |
-| `stop(reason?)` | Signals task complete; triggers end-of-task hook (optional reactive-compose prompt). |
+
+| Meta-tool                                                       | Purpose                                                                                                                                                                             |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `find_tool(query, k?)`                                          | Layer-2 search in the tool index.                                                                                                                                                   |
+| `list_tools()`                                                  | Full catalog dump; used sparingly when the mini-catalog was truncated.                                                                                                              |
+| `invoke_tool(name, args)`                                       | Explicit invocation path; alternative to letting the LLM pick from registered tools directly.                                                                                       |
+| `propose_new_tool(intent, rationale, existingToolsConsidered?)` | Triggers `ToolFactory` creation flow (Section 4). Factory runs a specialized code-gen sub-call to produce the `ToolDraft`. Requires ≥ 1 `find_tool` call this task.                 |
+| `propose_composite_tool(name, intent, plannedSteps)`            | Same flow as above, composite flavor. Factory's sub-call uses a composite-oriented code-gen prompt and expects `invokeTool(...)` call sites rather than novel implementation logic. |
+| `save_sequence_as_tool(sliceRef, name, intent)`                 | Reactive composition (also callable from CLI via `/compose`).                                                                                                                       |
+| `stop(reason?)`                                                 | Signals task complete; triggers end-of-task hook (optional reactive-compose prompt).                                                                                                |
+
 
 ---
 
@@ -922,3 +934,4 @@ Listed here so the abstraction seams are justified by concrete, anticipated upgr
 1. **Logging sensitivity.** Structured traces include `argsHash`/`resultHash`, not values, by default — but in practice a reviewer may want raw values. Config switch, and filter by risk tier?
 2. **Concurrent tool calls in one turn.** OpenAI-compatible APIs can emit multiple `tool_calls` in a single message. Do we execute them in parallel (several subprocesses at once), or serialize? POC default: serialize. Parallel is a natural follow-up, subject to resource caps.
 3. **Editing during Gate 1 approval.** The "edit-and-approve" action drops into `$EDITOR`. Does the edited version bypass the LLM repair-loop counter, or reset it? POC default: resets, so edits are treated as a fresh draft.
+
