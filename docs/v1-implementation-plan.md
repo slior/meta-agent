@@ -16,6 +16,32 @@
 
 ---
 
+## Execution Status
+
+| Task | Title | Status |
+|------|-------|--------|
+| 1 | Workspace Scaffold | ✅ complete (`d312ddd`) |
+| 2 | Shared Types and JSON Schemas | ⏳ in progress |
+| 3 | Canonical JSON and Hashing | ⬜ pending |
+| 4 | Tracer (JSONL Append-Only) | ⬜ pending |
+| 5 | Filesystem Tool Registry | ⬜ pending |
+| 6 | Hybrid Tool Index | ⬜ pending |
+| 7 | Tiered Approval Policy | ⬜ pending |
+| 8 | LLM Provider (OpenAI SDK + Mock) | ⬜ pending |
+| 9 | Sandbox Runner (Child-Side Bootstrap) | ⬜ pending |
+| 10 | NodePermissionSandbox (Parent-Side) | ⬜ pending |
+| 11 | Static Validator | ⬜ pending |
+| 12 | Tool Factory | ⬜ pending |
+| 13 | Meta-Tools and System Prompt | ⬜ pending |
+| 14 | Agent Loop | ⬜ pending |
+| 15 | CLI Config Loader and Approval TUI | ⬜ pending |
+| 16 | CLI REPL, /compose, and Bin Entry | ⬜ pending |
+| 17 | End-to-End Smoke Test with Mocked LLM | ⬜ pending |
+
+Legend: ⬜ pending · ⏳ in progress · ✅ complete
+
+---
+
 ## Pre-flight
 
 Before starting, confirm the environment:
@@ -232,10 +258,11 @@ export const version = "0.1.0";
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src" },
-  "include": ["src/**/*.ts"],
-  "references": [{ "path": "../core" }]
+  "include": ["src/**/*.ts"]
 }
 ```
+
+Note: no `references` — core cannot be a `composite` project while it also sets `noEmit: true`, and the workspace symlink at `node_modules/@meta-agent/core` plus `moduleResolution: Bundler` resolves the import at typecheck time.
 
 - [ ] **Step 10: Create `packages/cli/src/bin.ts`**
 
