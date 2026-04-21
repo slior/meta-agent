@@ -31,7 +31,7 @@
 | 9 | Sandbox Runner (Child-Side Bootstrap) | ✅ complete (`697e132`) |
 | 10 | NodePermissionSandbox (Parent-Side) | ✅ complete (`aa36aac`) |
 | 11 | Static Validator | ✅ complete (`46dd62b`) |
-| 12 | Tool Factory | ✅ complete |
+| 12 | Tool Factory | ✅ complete (`6460f40`) |
 | 13 | Meta-Tools and System Prompt | ⬜ pending |
 | 14 | Agent Loop | ⬜ pending |
 | 15 | CLI Config Loader and Approval TUI | ⬜ pending |
