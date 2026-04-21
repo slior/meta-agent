@@ -27,8 +27,8 @@
 | 5 | Filesystem Tool Registry | ✅ complete (`4553741`) |
 | 6 | Hybrid Tool Index | ✅ complete (`11f23dc`) |
 | 7 | Tiered Approval Policy | ✅ complete (`1f3ea3f`) |
-| 8 | LLM Provider (OpenAI SDK + Mock) | ⏳ in progress |
-| 9 | Sandbox Runner (Child-Side Bootstrap) | ⬜ pending |
+| 8 | LLM Provider (OpenAI SDK + Mock) | ✅ complete (`e5ba4d5`) |
+| 9 | Sandbox Runner (Child-Side Bootstrap) | ⏳ in progress |
 | 10 | NodePermissionSandbox (Parent-Side) | ⬜ pending |
 | 11 | Static Validator | ⬜ pending |
 | 12 | Tool Factory | ⬜ pending |
@@ -1666,6 +1666,7 @@ export interface LLMProvider {
 
 ```ts
 import OpenAI from "openai";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import type { ChatMessage, ChatRequest, ChatResponse, LLMProvider, StructuredRequest, ToolCall } from "./interface.ts";
 
 export type OpenAIProviderOpts = {
@@ -1689,12 +1690,13 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
-    const resp = await this.client.chat.completions.create({
+    const params: ChatCompletionCreateParamsNonStreaming = {
       model: this.model,
-      messages: req.messages as unknown as Parameters<typeof this.client.chat.completions.create>[0]["messages"],
-      tools: req.tools,
+      messages: req.messages as unknown as ChatCompletionCreateParamsNonStreaming["messages"],
       tool_choice: req.toolChoice ?? "auto",
-    });
+      ...(req.tools ? { tools: req.tools } : {}),
+    };
+    const resp = await this.client.chat.completions.create(params);
     const choice = resp.choices[0];
     if (!choice) throw new Error("OpenAI response had no choices");
     const msg = choice.message;
@@ -1710,16 +1712,16 @@ export class OpenAIProvider implements LLMProvider {
     };
     return {
       message: assistantMsg,
-      usage: resp.usage
-        ? { promptTokens: resp.usage.prompt_tokens, completionTokens: resp.usage.completion_tokens }
-        : undefined,
+      ...(resp.usage
+        ? { usage: { promptTokens: resp.usage.prompt_tokens, completionTokens: resp.usage.completion_tokens } }
+        : {}),
     };
   }
 
   async generateStructured<T>(req: StructuredRequest): Promise<T> {
-    const resp = await this.client.chat.completions.create({
+    const params: ChatCompletionCreateParamsNonStreaming = {
       model: this.model,
-      messages: req.messages as unknown as Parameters<typeof this.client.chat.completions.create>[0]["messages"],
+      messages: req.messages as unknown as ChatCompletionCreateParamsNonStreaming["messages"],
       response_format: {
         type: "json_schema",
         json_schema: {
@@ -1728,13 +1730,16 @@ export class OpenAIProvider implements LLMProvider {
           strict: true,
         },
       },
-    });
+    };
+    const resp = await this.client.chat.completions.create(params);
     const content = resp.choices[0]?.message.content;
     if (!content) throw new Error("OpenAI structured response had no content");
     return JSON.parse(content) as T;
   }
 }
 ```
+
+Note: `ChatCompletionCreateParamsNonStreaming` is imported explicitly so `.choices`/`.usage` on the response aren't unioned away by the streaming-param branch. Under `exactOptionalPropertyTypes: true`, optional keys use conditional spreads rather than assigning `undefined`.
 
 - [ ] **Step 3: Create `packages/core/src/llm/mock-provider.ts`**
 
