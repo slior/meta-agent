@@ -21,8 +21,8 @@
 | Task | Title | Status |
 |------|-------|--------|
 | 1 | Workspace Scaffold | ✅ complete (`d312ddd`) |
-| 2 | Shared Types and JSON Schemas | ⏳ in progress |
-| 3 | Canonical JSON and Hashing | ⬜ pending |
+| 2 | Shared Types and JSON Schemas | ✅ complete (`a236893`) |
+| 3 | Canonical JSON and Hashing | ⏳ in progress |
 | 4 | Tracer (JSONL Append-Only) | ⬜ pending |
 | 5 | Filesystem Tool Registry | ⬜ pending |
 | 6 | Hybrid Tool Index | ⬜ pending |
@@ -208,7 +208,7 @@ traces/*.jsonl
   "main": "./src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "scripts": {
-    "test": "node --test --experimental-strip-types --no-warnings src/"
+    "test": "node --test --experimental-strip-types --no-warnings 'src/**/*.test.ts'"
   },
   "dependencies": {
     "openai": "^4.67.0",
@@ -216,6 +216,8 @@ traces/*.jsonl
   }
 }
 ```
+
+Note: the `'src/**/*.test.ts'` is single-quoted so the shell does not expand the glob; Node's `--test` flag expands `**` recursively and includes `.ts` files (which the default auto-discovery does not as of Node 22.6).
 
 - [ ] **Step 6: Create `packages/core/tsconfig.json`**
 
@@ -244,7 +246,7 @@ export const version = "0.1.0";
   "main": "./src/bin.ts",
   "bin": { "meta-agent": "./src/bin.ts" },
   "scripts": {
-    "test": "node --test --experimental-strip-types --no-warnings src/"
+    "test": "node --test --experimental-strip-types --no-warnings 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@meta-agent/core": "*"

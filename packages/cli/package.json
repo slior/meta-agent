@@ -6,7 +6,7 @@
   "main": "./src/bin.ts",
   "bin": { "meta-agent": "./src/bin.ts" },
   "scripts": {
-    "test": "node --test --experimental-strip-types --no-warnings src/"
+    "test": "node --test --experimental-strip-types --no-warnings 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@meta-agent/core": "*"
