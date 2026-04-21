@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +36,11 @@ export class NodePermissionSandbox implements Sandbox {
     let cleanupDir: string | null = null;
     if (!toolPath) {
       cleanupDir = await mkdtemp(join(tmpdir(), "meta-agent-sb-"));
-      toolPath = join(cleanupDir, `${tool.manifest.name}.ts`);
+      // Resolve symlinks (e.g. /var -> /private/var on macOS) so Node's
+      // --allow-fs-read permission check matches the canonical path used
+      // by the import resolver.
+      const realDir = await realpath(cleanupDir);
+      toolPath = join(realDir, `${tool.manifest.name}.ts`);
       await writeFile(toolPath, tool.code, "utf8");
     }
 

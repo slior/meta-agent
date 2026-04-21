@@ -30,8 +30,8 @@
 | 8 | LLM Provider (OpenAI SDK + Mock) | ✅ complete (`e5ba4d5`) |
 | 9 | Sandbox Runner (Child-Side Bootstrap) | ✅ complete (`697e132`) |
 | 10 | NodePermissionSandbox (Parent-Side) | ✅ complete (`aa36aac`) |
-| 11 | Static Validator | ⬜ pending |
-| 12 | Tool Factory | ⬜ pending |
+| 11 | Static Validator | ✅ complete (`46dd62b`) |
+| 12 | Tool Factory | ✅ complete |
 | 13 | Meta-Tools and System Prompt | ⬜ pending |
 | 14 | Agent Loop | ⬜ pending |
 | 15 | CLI Config Loader and Approval TUI | ⬜ pending |
