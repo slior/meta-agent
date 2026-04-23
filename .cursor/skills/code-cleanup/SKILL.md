@@ -2,10 +2,10 @@
 name: code-cleanup
 description: >-
   Removes basic code smells in a focused pass—magic strings and numbers, duplicated
-  protocol identifiers, and oversized control-flow blocks—by introducing typed constants,
-  single sources of truth, and extracted methods. Use when cleaning up a file or module,
-  reducing repetition, preparing a refactor, or when the user mentions code smells,
-  literals, constants, or extracting methods.
+  protocol identifiers, repeated inline unions, and oversized control-flow blocks—by
+  introducing typed constants, named types, single sources of truth, and extracted methods.
+  Use when cleaning up a file or module, reducing repetition, preparing a refactor, or when
+  the user mentions code smells, literals, constants, named types, or extracting methods.
 ---
 
 # Code cleanup (focused file pass)
@@ -22,6 +22,7 @@ Read the target file end-to-end and note:
 | **Numeric literals** | Defaults (`?? 20`), limits, timeouts, lengths—especially repeated or documented in comments. |
 | **Fat loops or run methods** | Sequences that mix I/O, tracing, branching, and mutation in one block; repeated patterns inside loops. |
 | **Consumer drift** | `switch (e.kind)`, tests asserting string `kind`, CLI mappers—must stay aligned with producers. |
+| **Repeated anonymous unions** | The same union (e.g. `"a" \| "b" \| null`) appears in a return type and parameter(s), or labels a concept worth naming in docs. |
 
 Skip renaming for **domain prose** (user-visible copy, LLM prompts) unless the goal is to sync names with constants; if in doubt, only substitute where the string is an **identifier**, not natural language.
 
@@ -42,6 +43,13 @@ Skip renaming for **domain prose** (user-visible copy, LLM prompts) unless the g
 **Tracer / telemetry `kind` strings**
 
 - Define `TRACE_KIND_*` (or project convention) **next to `Tracer` / `TraceEvent`**, export, use in `tracer.log(...)`, tests, and any formatter that `switch`es on `kind`.
+
+**Named type aliases for repeated unions**
+
+- When an inline union is **duplicated** across functions in the same module (return type + argument, or several APIs sharing one notion), introduce **`export type Name = …`** colocated with those functions.
+- Add a one-line JSDoc if the name is not obvious (what it represents in the domain, e.g. “supported root JSON Schema `type` values”).
+- Use the named type on **every** relevant signature so refactors stay centralized; callers usually need no change if inference already matched.
+- Export from the package **`index`** only if external modules should reference the type; otherwise keep it module-local.
 
 ## 3. Extract methods without changing behavior
 
@@ -82,6 +90,7 @@ Copy for the session:
 Code cleanup — target file: ___
 
 - [ ] Protocol/id literals → const object + types aligned
+- [ ] Repeated unions → named `export type` + JSDoc, wire signatures
 - [ ] Magic numbers → named module constants
 - [ ] Trace/event kinds → TRACE_KIND_* near Tracer, consumers updated
 - [ ] Fat blocks → helpers with explicit params + preserved side-effect order
