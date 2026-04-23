@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { CHAT_ROLE } from "./interface.ts";
 import { MockLLMProvider } from "./mock-provider.ts";
 
 test("MockLLMProvider dispatches handlers in order", async () => {
   const m = new MockLLMProvider()
-    .onChat(() => ({ message: { role: "assistant", content: "first" } }))
-    .onChat(() => ({ message: { role: "assistant", content: "second" } }));
+    .onChat(() => ({ message: { role: CHAT_ROLE.assistant, content: "first" } }))
+    .onChat(() => ({ message: { role: CHAT_ROLE.assistant, content: "second" } }));
 
   assert.equal((await m.chat({ messages: [] })).message.content, "first");
   assert.equal((await m.chat({ messages: [] })).message.content, "second");

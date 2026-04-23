@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  AgentLoop, FsToolRegistry, HybridToolIndex, NodePermissionSandbox,
+  AgentLoop, CHAT_ROLE, FsToolRegistry, HybridToolIndex, META_FN, NodePermissionSandbox,
   TieredApprovalPolicy, ToolFactory, Tracer, MockLLMProvider,
 } from "./index.ts";
 import type { ChatResponse, ToolDraft } from "./index.ts";
@@ -12,7 +12,7 @@ import type { ChatResponse, ToolDraft } from "./index.ts";
 function asst(content: string | null, calls: Array<{ id: string; name: string; args: unknown }> = []): ChatResponse {
   return {
     message: {
-      role: "assistant",
+      role: CHAT_ROLE.assistant,
       content,
       ...(calls.length
         ? { tool_calls: calls.map((c) => ({ id: c.id, type: "function" as const, function: { name: c.name, arguments: JSON.stringify(c.args) } })) }
@@ -60,10 +60,10 @@ test("E2E: agent finds-nothing, proposes tool, then invokes it", async () => {
     const llm = new MockLLMProvider();
 
     llm
-      .onChat(() => asst(null, [{ id: "1", name: "find_tool", args: { query: "double integer" } }]))
-      .onChat(() => asst(null, [{ id: "2", name: "propose_new_tool", args: { intent: "double an integer", rationale: "user asked" } }]))
+      .onChat(() => asst(null, [{ id: "1", name: META_FN.findTool, args: { query: "double integer" } }]))
+      .onChat(() => asst(null, [{ id: "2", name: META_FN.proposeNewTool, args: { intent: "double an integer", rationale: "user asked" } }]))
       .onStructured<ToolDraft>(() => DOUBLE_DRAFT)
-      .onChat(() => asst(null, [{ id: "3", name: "invoke_tool", args: { name: "double-int", args: { x: 7 } } }]))
+      .onChat(() => asst(null, [{ id: "3", name: META_FN.invokeTool, args: { name: "double-int", args: { x: 7 } } }]))
       .onChat(() => asst("result: 14"));
 
     const prompter = { promptGate1: async () => ({ decision: "approve" as const, alwaysApprove: true }), promptGate23: async () => { throw new Error("no"); } };
@@ -104,7 +104,7 @@ test("E2E: composite invokeTool runs with no ambient authority (depth 1 inner ca
     assert.equal(c.ok, true);
 
     llm
-      .onChat(() => asst(null, [{ id: "x", name: "invoke_tool", args: { name: "plus-one-then-double", args: { x: 10 } } }]))
+      .onChat(() => asst(null, [{ id: "x", name: META_FN.invokeTool, args: { name: "plus-one-then-double", args: { x: 10 } } }]))
       .onChat(() => asst("22"));
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });

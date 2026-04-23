@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { META_TOOL_DEFS, META_TOOL_NAMES } from "./meta-tools.ts";
+import { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./meta-tools.ts";
 import { renderSystemPrompt } from "./system-prompt.ts";
 
 test("meta-tool defs are well-formed", () => {
@@ -13,16 +13,18 @@ test("meta-tool defs are well-formed", () => {
 });
 
 test("META_TOOL_NAMES contains all expected names", () => {
-  for (const name of [
-    "find_tool",
-    "list_tools",
-    "invoke_tool",
-    "propose_new_tool",
-    "propose_composite_tool",
-    "stop",
-  ]) {
+  for (const name of Object.values(META_FN)) {
     assert.ok(META_TOOL_NAMES.has(name), `missing ${name}`);
   }
+});
+
+test("find_tool k schema matches FIND_TOOL_TOP_K", () => {
+  const findDef = META_TOOL_DEFS.find((t) => t.function.name === META_FN.findTool);
+  assert.ok(findDef);
+  const kSchema = (findDef!.function.parameters.properties as Record<string, unknown>).k as Record<string, unknown>;
+  assert.equal(kSchema.minimum, FIND_TOOL_TOP_K.min);
+  assert.equal(kSchema.maximum, FIND_TOOL_TOP_K.max);
+  assert.equal(kSchema.default, FIND_TOOL_TOP_K.default);
 });
 
 test("renderSystemPrompt lists catalog entries with composite marker", () => {

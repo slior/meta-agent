@@ -1,5 +1,5 @@
 import type { ApprovalPolicy } from "../approval/interface.ts";
-import type { LLMProvider } from "../llm/interface.ts";
+import { CHAT_ROLE, type LLMProvider } from "../llm/interface.ts";
 import type { Sandbox } from "../sandbox/interface.ts";
 import type { ToolRegistry } from "../registry/interface.ts";
 import type { ApprovalRecord, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
@@ -168,7 +168,7 @@ export class ToolFactory {
   private async genDraft(systemPrompt: string): Promise<ToolDraft> {
     this.opts.tracer.log("factory-gen-draft", { phase: "start" });
     return this.opts.llm.generateStructured<ToolDraft>({
-      messages: [{ role: "system", content: systemPrompt }],
+      messages: [{ role: CHAT_ROLE.system, content: systemPrompt }],
       schemaName: "ToolDraft",
       schema: DRAFT_SCHEMA,
     });
@@ -177,8 +177,8 @@ export class ToolFactory {
   private async repair(previous: ToolDraft, errors: string[]): Promise<ToolDraft> {
     return this.opts.llm.generateStructured<ToolDraft>({
       messages: [
-        { role: "system", content: "Produce a corrected ToolDraft." },
-        { role: "user", content: repairPrompt(previous, errors) },
+        { role: CHAT_ROLE.system, content: "Produce a corrected ToolDraft." },
+        { role: CHAT_ROLE.user, content: repairPrompt(previous, errors) },
       ],
       schemaName: "ToolDraft",
       schema: DRAFT_SCHEMA,

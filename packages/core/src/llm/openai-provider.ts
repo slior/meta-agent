@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
-import type { ChatMessage, ChatRequest, ChatResponse, LLMProvider, StructuredRequest, ToolCall } from "./interface.ts";
+import { CHAT_ROLE, type ChatMessage, type ChatRequest, type ChatResponse, type LLMProvider, type StructuredRequest, type ToolCall } from "./interface.ts";
 
 export type OpenAIProviderOpts = {
   apiKey: string;
@@ -38,8 +38,8 @@ export class OpenAIProvider implements LLMProvider {
       type: "function",
       function: { name: tc.function.name, arguments: tc.function.arguments },
     }));
-    const assistantMsg: ChatMessage & { role: "assistant" } = {
-      role: "assistant",
+    const assistantMsg: Extract<ChatMessage, { role: typeof CHAT_ROLE.assistant }> = {
+      role: CHAT_ROLE.assistant,
       content: msg.content ?? null,
       ...(toolCalls ? { tool_calls: toolCalls } : {}),
     };

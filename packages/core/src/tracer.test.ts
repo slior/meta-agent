@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Tracer } from "./tracer.ts";
+import { META_FN } from "./agent/meta-tools.ts";
+import {
+  TRACE_KIND_LLM_TURN,
+  TRACE_KIND_TOOL_CALL,
+  TRACE_KIND_TOOL_INVOKED,
+  Tracer,
+} from "./tracer.ts";
 
 async function tmp() {
   return mkdtemp(join(tmpdir(), "meta-agent-trace-"));
@@ -13,18 +19,18 @@ test("Tracer writes JSONL events in order", async () => {
   const dir = await tmp();
   try {
     const tracer = await Tracer.open(dir, "session-1");
-    tracer.log("llm-turn", { modelId: "x", latency: 10 });
-    tracer.log("tool-invoked", { name: "t", duration: 5 });
+    tracer.log(TRACE_KIND_LLM_TURN, { modelId: "x", latency: 10 });
+    tracer.log(TRACE_KIND_TOOL_INVOKED, { name: "t", duration: 5 });
     await tracer.close();
 
     const files = (await readFile(join(dir, tracer.filename), "utf8")).trim().split("\n");
     assert.equal(files.length, 2);
     const e1 = JSON.parse(files[0]!);
     const e2 = JSON.parse(files[1]!);
-    assert.equal(e1.kind, "llm-turn");
+    assert.equal(e1.kind, TRACE_KIND_LLM_TURN);
     assert.equal(e1.sessionId, "session-1");
     assert.ok(e1.ts);
-    assert.equal(e2.kind, "tool-invoked");
+    assert.equal(e2.kind, TRACE_KIND_TOOL_INVOKED);
     assert.equal(e2.data.name, "t");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -51,16 +57,16 @@ test("Tracer observers receive each event with correct shape", async () => {
     const tracer = await Tracer.open(dir, "obs-session", {
       observers: [(e) => received.push(e)],
     });
-    tracer.log("llm-turn", { turn: 0 });
-    tracer.log("tool-call", { name: "find_tool" });
+    tracer.log(TRACE_KIND_LLM_TURN, { turn: 0 });
+    tracer.log(TRACE_KIND_TOOL_CALL, { name: META_FN.findTool });
     await tracer.close();
 
     assert.equal(received.length, 2);
-    assert.equal(received[0]!.kind, "llm-turn");
+    assert.equal(received[0]!.kind, TRACE_KIND_LLM_TURN);
     assert.equal(received[0]!.sessionId, "obs-session");
     assert.ok(received[0]!.ts);
     assert.deepEqual(received[0]!.data, { turn: 0 });
-    assert.equal(received[1]!.kind, "tool-call");
+    assert.equal(received[1]!.kind, TRACE_KIND_TOOL_CALL);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -73,7 +79,7 @@ test("Tracer observer is called before disk write (same event shape as file)", a
     const tracer = await Tracer.open(dir, "s2", {
       observers: [(e) => observed.push(structuredClone(e))],
     });
-    tracer.log("tool-invoked", { name: "my-tool", duration: 42 });
+    tracer.log(TRACE_KIND_TOOL_INVOKED, { name: "my-tool", duration: 42 });
     await tracer.close();
 
     const written = JSON.parse((await readFile(join(dir, tracer.filename), "utf8")).trim());

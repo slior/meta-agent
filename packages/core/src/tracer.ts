@@ -2,6 +2,21 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
+/** `TraceEvent.kind` for the main agent LLM chat request each turn. */
+export const TRACE_KIND_LLM_TURN = "llm-turn" as const;
+
+/** `TraceEvent.kind` when the model requested a tool (meta or registry); includes args and structured result. */
+export const TRACE_KIND_TOOL_CALL = "tool-call" as const;
+
+/** `TraceEvent.kind` for the optional post-stop LLM pass that turns tool JSON into a user-facing reply. */
+export const TRACE_KIND_LLM_SYNTHESIS = "llm-synthesis" as const;
+
+/** `TraceEvent.kind` when a registry tool invocation completed in the sandbox (success or failure). */
+export const TRACE_KIND_TOOL_INVOKED = "tool-invoked" as const;
+
+/** `TraceEvent.kind` when approval rejected executing a tool before sandbox run. */
+export const TRACE_KIND_EXECUTION_DENIED = "execution-denied" as const;
+
 export type TraceEvent = {
   ts: string;
   sessionId: string;

@@ -11,7 +11,8 @@ import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
-import type { ChatResponse } from "../llm/interface.ts";
+import { CHAT_ROLE, type ChatResponse } from "../llm/interface.ts";
+import { META_FN } from "./meta-tools.ts";
 import type { ApprovalRecord, Tool } from "../types.ts";
 
 const SAMPLE_HASH = "sha256:" + "a".repeat(64);
@@ -45,7 +46,7 @@ const sampleApproval: ApprovalRecord = {
 function asst(content: string | null, toolCalls?: Array<{ id: string; name: string; args: unknown }>): ChatResponse {
   return {
     message: {
-      role: "assistant",
+      role: CHAT_ROLE.assistant,
       content,
       ...(toolCalls
         ? { tool_calls: toolCalls.map((c) => ({ id: c.id, type: "function" as const, function: { name: c.name, arguments: JSON.stringify(c.args) } })) }
@@ -82,8 +83,8 @@ test("agent: find_tool then stop", async () => {
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
-      .onChat(() => asst(null, [{ id: "1", name: "find_tool", args: { query: "doesn't matter" } }]))
-      .onChat(() => asst(null, [{ id: "2", name: "stop", args: { reason: "done" } }]))
+      .onChat(() => asst(null, [{ id: "1", name: META_FN.findTool, args: { query: "doesn't matter" } }]))
+      .onChat(() => asst(null, [{ id: "2", name: META_FN.stop, args: { reason: "done" } }]))
       .onChat(() => asst("synthesized for user"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
@@ -96,11 +97,14 @@ test("agent: find_tool then stop", async () => {
     const secondReq = llm.calls.chat[1];
     assert.ok(secondReq);
     assert.ok(
-      !JSON.stringify(secondReq.messages).includes("invoke_tool_recovery_hint"),
+      !JSON.stringify(secondReq.messages).includes(`${META_FN.invokeTool}_recovery_hint`),
       "no recovery user line when invoke_tool did not fail",
     );
     const emptyFindMsg = secondReq.messages.find(
-      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("find_tool_empty_recovery_hint"),
+      (m) =>
+        m.role === CHAT_ROLE.user &&
+        typeof m.content === "string" &&
+        m.content.includes(`${META_FN.findTool}_empty_recovery_hint`),
     );
     assert.equal(emptyFindMsg?.content, EMPTY_FIND_RECOVERY_USER);
     await tracer.close();
@@ -117,8 +121,8 @@ test("agent: find_tool with hits does not inject empty-find recovery", async () 
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
-      .onChat(() => asst(null, [{ id: "1", name: "find_tool", args: { query: "alpha" } }]))
-      .onChat(() => asst(null, [{ id: "2", name: "stop", args: { reason: "done" } }]))
+      .onChat(() => asst(null, [{ id: "1", name: META_FN.findTool, args: { query: "alpha" } }]))
+      .onChat(() => asst(null, [{ id: "2", name: META_FN.stop, args: { reason: "done" } }]))
       .onChat(() => asst("ok"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
@@ -131,7 +135,7 @@ test("agent: find_tool with hits does not inject empty-find recovery", async () 
     const secondReq = llm.calls.chat[1];
     assert.ok(secondReq);
     assert.ok(
-      !JSON.stringify(secondReq.messages).includes("find_tool_empty_recovery_hint"),
+      !JSON.stringify(secondReq.messages).includes(`${META_FN.findTool}_empty_recovery_hint`),
       "no empty-find nudge when find_tool returned matches",
     );
     await tracer.close();
@@ -150,8 +154,8 @@ test("agent: stop batched with other tools is deferred — next turn answer used
       // Turn 0: both find_tool and stop in the same assistant message.
       // stop.reason is "ignored" because the model hasn't seen tool results yet.
       .onChat(() => asst(null, [
-        { id: "t1", name: "find_tool", args: { query: "anything" } },
-        { id: "t2", name: "stop", args: { reason: "ignored early reason" } },
+        { id: "t1", name: META_FN.findTool, args: { query: "anything" } },
+        { id: "t2", name: META_FN.stop, args: { reason: "ignored early reason" } },
       ]))
       // Turn 1: after all tool messages are appended, the LLM produces a grounded answer.
       .onChat(() => asst("grounded answer after tools"));
@@ -177,8 +181,8 @@ test("agent: synthesis falls back to stop.reason when content empty", async () =
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
-      .onChat(() => asst(null, [{ id: "1", name: "find_tool", args: { query: "x" } }]))
-      .onChat(() => asst(null, [{ id: "2", name: "stop", args: { reason: "fallback reason" } }]))
+      .onChat(() => asst(null, [{ id: "1", name: META_FN.findTool, args: { query: "x" } }]))
+      .onChat(() => asst(null, [{ id: "2", name: META_FN.stop, args: { reason: "fallback reason" } }]))
       .onChat(() => asst(null));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
@@ -201,7 +205,7 @@ test("agent: stop alone (not batched) still returns stop reason immediately", as
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
-      .onChat(() => asst(null, [{ id: "s1", name: "stop", args: { reason: "direct stop" } }]));
+      .onChat(() => asst(null, [{ id: "s1", name: META_FN.stop, args: { reason: "direct stop" } }]));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
@@ -224,7 +228,7 @@ test("agent: failed invoke_tool injects recovery user before next chat", async (
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() =>
-        asst(null, [{ id: "inv1", name: "invoke_tool", args: { name: "missing-tool", args: {} } }]),
+        asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "missing-tool", args: {} } }]),
       )
       .onChat(() => asst("recovered"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
@@ -238,11 +242,17 @@ test("agent: failed invoke_tool injects recovery user before next chat", async (
     const secondReq = llm.calls.chat[1];
     assert.ok(secondReq);
     const hasRecovery = secondReq.messages.some(
-      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("invoke_tool_recovery_hint"),
+      (m) =>
+        m.role === CHAT_ROLE.user &&
+        typeof m.content === "string" &&
+        m.content.includes(`${META_FN.invokeTool}_recovery_hint`),
     );
     assert.ok(hasRecovery, "second llm.chat should include synthetic recovery user message");
     const recoveryMsg = secondReq.messages.find(
-      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("invoke_tool_recovery_hint"),
+      (m) =>
+        m.role === CHAT_ROLE.user &&
+        typeof m.content === "string" &&
+        m.content.includes(`${META_FN.invokeTool}_recovery_hint`),
     );
     assert.equal(recoveryMsg?.content, INVOKE_FAILURE_RECOVERY_USER);
     await tracer.close();
@@ -258,7 +268,7 @@ test("agent: empty find_tool injects recovery user before next chat", async () =
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
-      .onChat(() => asst(null, [{ id: "f1", name: "find_tool", args: { query: "anything" } }]))
+      .onChat(() => asst(null, [{ id: "f1", name: META_FN.findTool, args: { query: "anything" } }]))
       .onChat(() => asst("done"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
@@ -271,7 +281,10 @@ test("agent: empty find_tool injects recovery user before next chat", async () =
     const secondReq = llm.calls.chat[1];
     assert.ok(secondReq);
     const recoveryMsg = secondReq.messages.find(
-      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("find_tool_empty_recovery_hint"),
+      (m) =>
+        m.role === CHAT_ROLE.user &&
+        typeof m.content === "string" &&
+        m.content.includes(`${META_FN.findTool}_empty_recovery_hint`),
     );
     assert.equal(recoveryMsg?.content, EMPTY_FIND_RECOVERY_USER);
     await tracer.close();
@@ -287,7 +300,7 @@ test("agent: propose_new_tool requires find_tool first", async () => {
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
-      .onChat(() => asst(null, [{ id: "1", name: "propose_new_tool", args: { intent: "i", rationale: "r" } }]))
+      .onChat(() => asst(null, [{ id: "1", name: META_FN.proposeNewTool, args: { intent: "i", rationale: "r" } }]))
       .onChat(() => asst("I was told to find first."));
     const prompter = { promptGate1: async () => { throw new Error("no prompt expected"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });

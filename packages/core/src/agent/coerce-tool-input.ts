@@ -3,13 +3,16 @@
  * v1: only root `inputSchema.type` of exactly `"object"` or `"array"` (no allOf / oneOf / multi-type).
  */
 
-export function rootJsonSchemaKind(schema: Record<string, unknown>): "object" | "array" | null {
+/** Root JSON Schema `type` used for coercion, or null when the schema is not a supported simple root. */
+export type RootJsonSchemaKind = "object" | "array" | null;
+
+export function rootJsonSchemaKind(schema: Record<string, unknown>): RootJsonSchemaKind {
   const t = schema.type;
   if (t === "object" || t === "array") return t;
   return null;
 }
 
-export function coerceStringifiedJsonInput(args: unknown, kind: "object" | "array" | null): unknown {
+export function coerceStringifiedJsonInput(args: unknown, kind: RootJsonSchemaKind): unknown {
   if (kind === null || typeof args !== "string") return args;
 
   let parsed: unknown;
