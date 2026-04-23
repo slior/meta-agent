@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentLoop } from "./agent-loop.ts";
+import { AgentLoop, INVOKE_FAILURE_RECOVERY_USER } from "./agent-loop.ts";
 import { MockLLMProvider } from "../llm/mock-provider.ts";
 import { FsToolRegistry } from "../registry/fs-registry.ts";
 import { HybridToolIndex } from "../index-store/hybrid-index.ts";
@@ -54,7 +54,8 @@ test("agent: find_tool then stop", async () => {
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "1", name: "find_tool", args: { query: "doesn't matter" } }]))
-      .onChat(() => asst(null, [{ id: "2", name: "stop", args: { reason: "done" } }]));
+      .onChat(() => asst(null, [{ id: "2", name: "stop", args: { reason: "done" } }]))
+      .onChat(() => asst("synthesized for user"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
@@ -62,7 +63,124 @@ test("agent: find_tool then stop", async () => {
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("search something");
-    assert.equal(out, "done");
+    assert.equal(out, "synthesized for user");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    assert.ok(
+      !JSON.stringify(secondReq.messages).includes("invoke_tool_recovery_hint"),
+      "no recovery user line when invoke_tool did not fail",
+    );
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: stop batched with other tools is deferred — next turn answer used", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const llm = new MockLLMProvider()
+      // Turn 0: both find_tool and stop in the same assistant message.
+      // stop.reason is "ignored" because the model hasn't seen tool results yet.
+      .onChat(() => asst(null, [
+        { id: "t1", name: "find_tool", args: { query: "anything" } },
+        { id: "t2", name: "stop", args: { reason: "ignored early reason" } },
+      ]))
+      // Turn 1: after all tool messages are appended, the LLM produces a grounded answer.
+      .onChat(() => asst("grounded answer after tools"));
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    const out = await loop.run("do something");
+    // Must NOT return "ignored early reason"; must use the follow-up content.
+    assert.equal(out, "grounded answer after tools");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: synthesis falls back to stop.reason when content empty", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "1", name: "find_tool", args: { query: "x" } }]))
+      .onChat(() => asst(null, [{ id: "2", name: "stop", args: { reason: "fallback reason" } }]))
+      .onChat(() => asst(null));
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    const out = await loop.run("q");
+    assert.equal(out, "fallback reason");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: stop alone (not batched) still returns stop reason immediately", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "s1", name: "stop", args: { reason: "direct stop" } }]));
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    const out = await loop.run("stop now");
+    assert.equal(out, "direct stop");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: failed invoke_tool injects recovery user before next chat", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const llm = new MockLLMProvider()
+      .onChat(() =>
+        asst(null, [{ id: "inv1", name: "invoke_tool", args: { name: "missing-tool", args: {} } }]),
+      )
+      .onChat(() => asst("recovered"));
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    const out = await loop.run("run missing tool");
+    assert.equal(out, "recovered");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const hasRecovery = secondReq.messages.some(
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("invoke_tool_recovery_hint"),
+    );
+    assert.ok(hasRecovery, "second llm.chat should include synthetic recovery user message");
+    const recoveryMsg = secondReq.messages.find(
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("invoke_tool_recovery_hint"),
+    );
+    assert.equal(recoveryMsg?.content, INVOKE_FAILURE_RECOVERY_USER);
     await tracer.close();
   } finally {
     await rm(dir, { recursive: true, force: true });

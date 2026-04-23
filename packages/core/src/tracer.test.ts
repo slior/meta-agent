@@ -43,3 +43,71 @@ test("Tracer.log is synchronous from caller's perspective but flushes on close",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("Tracer observers receive each event with correct shape", async () => {
+  const dir = await tmp();
+  try {
+    const received: import("./tracer.ts").TraceEvent[] = [];
+    const tracer = await Tracer.open(dir, "obs-session", {
+      observers: [(e) => received.push(e)],
+    });
+    tracer.log("llm-turn", { turn: 0 });
+    tracer.log("tool-call", { name: "find_tool" });
+    await tracer.close();
+
+    assert.equal(received.length, 2);
+    assert.equal(received[0]!.kind, "llm-turn");
+    assert.equal(received[0]!.sessionId, "obs-session");
+    assert.ok(received[0]!.ts);
+    assert.deepEqual(received[0]!.data, { turn: 0 });
+    assert.equal(received[1]!.kind, "tool-call");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Tracer observer is called before disk write (same event shape as file)", async () => {
+  const dir = await tmp();
+  try {
+    const observed: import("./tracer.ts").TraceEvent[] = [];
+    const tracer = await Tracer.open(dir, "s2", {
+      observers: [(e) => observed.push(structuredClone(e))],
+    });
+    tracer.log("tool-invoked", { name: "my-tool", duration: 42 });
+    await tracer.close();
+
+    const written = JSON.parse((await readFile(join(dir, tracer.filename), "utf8")).trim());
+    assert.equal(observed.length, 1);
+    assert.equal(observed[0]!.kind, written.kind);
+    assert.equal(observed[0]!.sessionId, written.sessionId);
+    assert.deepEqual(observed[0]!.data, written.data);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Tracer open without options is backward-compatible", async () => {
+  const dir = await tmp();
+  try {
+    const tracer = await Tracer.open(dir, "compat");
+    tracer.log("x", {});
+    await tracer.close();
+    const lines = (await readFile(join(dir, tracer.filename), "utf8")).trim().split("\n");
+    assert.equal(lines.length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Tracer observer error does not crash the agent", async () => {
+  const dir = await tmp();
+  try {
+    const tracer = await Tracer.open(dir, "err-obs", {
+      observers: [() => { throw new Error("observer boom"); }],
+    });
+    assert.doesNotThrow(() => tracer.log("x", {}));
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

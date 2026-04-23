@@ -25,9 +25,13 @@ You have access to these meta-tools (always available):
 - stop(reason?): end the task
 
 Workflow guidance:
-1. If a catalog entry below clearly matches, call invoke_tool directly.
-2. If nothing in the catalog fits, call find_tool to search deeper.
-3. If find_tool returns nothing suitable, propose_new_tool or propose_composite_tool.
+1. If you cannot complete the task, try at least once to find a tool that can help you complete the task.
+2. If a catalog entry below clearly matches by capability and the paths or permissions implied by the task, call invoke_tool directly.
+3. When the catalog line is ambiguous or the paths might fall outside a tool's obvious scope, call find_tool before invoke_tool.
+4. If nothing in the catalog fits, call find_tool to search deeper.
+5. If find_tool returns nothing suitable, propose_new_tool or propose_composite_tool.
+6. If invoke_tool fails (tool result JSON has ok: false — e.g. user rejection, schema error, or runtime error), do not only answer in plain assistant text: use find_tool with a sharper query, list_tools, or propose_new_tool / propose_composite_tool as needed (calling find_tool again is allowed).
+7. Call stop only after you have read the tool results you need for the answer — never in the same turn as other tool calls.
 
 ## Available tools (${opts.catalog.length})
 ${list || "(none yet)"}${elided}

@@ -60,7 +60,9 @@ export class OpenAIProvider implements LLMProvider {
         json_schema: {
           name: req.schemaName,
           schema: req.schema,
-          strict: true,
+          // strict: true rejects schemas with nested open objects (e.g. inputSchema / outputShape in
+          // ToolDraft); correctness is enforced by staticValidateDraft + smoke tests instead.
+          strict: false,
         },
       },
     };

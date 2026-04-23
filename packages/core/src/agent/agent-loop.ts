@@ -11,6 +11,15 @@ import { META_TOOL_DEFS, META_TOOL_NAMES } from "./meta-tools.ts";
 import { ToolFactory } from "../factory/factory.ts";
 import { toolError } from "../errors.ts";
 
+const FINAL_SYNTHESIS_SYSTEM = `You are the final answer step for a meta-agent. The conversation above includes the user's request and tool results (JSON in assistant/tool messages).
+Write a concise reply for the user in plain language. Use concrete numbers, paths, and facts from tool results when present. Do not call tools or invent data not supported by the transcript.`;
+
+/** Injected as a synthetic user line after a batch where invoke_tool failed; exported for tests. */
+export const INVOKE_FAILURE_RECOVERY_USER =
+  "invoke_tool_recovery_hint: A previous invoke_tool call in this turn failed or was rejected. " +
+  "Your next step must use meta-tools: try find_tool with a better query, list_tools, or propose_new_tool / propose_composite_tool if no tool fits. " +
+  "Do not end with only an apology unless you have genuinely exhausted these options.";
+
 export type ToolInvokedEvent = { name: string; args: unknown; ok: boolean; durationMs: number };
 
 export type AgentLoopOpts = {
@@ -59,12 +68,28 @@ export class AgentLoop {
         return "(agent returned no content)";
       }
 
+      // If stop appears alongside other tools in one batch the model has not yet
+      // seen tool results when it wrote stop.reason. Defer stop so we can run
+      // another LLM turn after all tool messages are appended.
+      const hasStop = resp.message.tool_calls.some((c) => c.function.name === "stop");
+      const hasOther = resp.message.tool_calls.some((c) => c.function.name !== "stop");
+      const deferStop = hasStop && hasOther;
+
+      let invokeFailedThisBatch = false;
       for (const call of resp.message.tool_calls) {
         const parsedArgs = safeParse(call.function.arguments);
         const result = await this.dispatch(call.function.name, parsedArgs, task, 0);
+        invokeFailedThisBatch ||= call.function.name === "invoke_tool" && !result.ok;
         this.opts.tracer.log("tool-call", { name: call.function.name, args: parsedArgs, ok: result.ok });
-        if (call.function.name === "stop") {
-          return (parsedArgs as { reason?: string })?.reason ?? "stopped";
+        if (call.function.name === "stop" && !deferStop) {
+          const reason = (parsedArgs as { reason?: string })?.reason ?? "stopped";
+          const hadPriorToolResults = messagesIncludeToolResults(messages);
+          messages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: JSON.stringify(result),
+          });
+          return await this.finalizeAfterStop(messages, reason, hadPriorToolResults);
         }
         messages.push({
           role: "tool",
@@ -72,8 +97,35 @@ export class AgentLoop {
           content: JSON.stringify(result),
         });
       }
+      if (invokeFailedThisBatch) {
+        messages.push({ role: "user", content: INVOKE_FAILURE_RECOVERY_USER });
+      }
     }
     return `(max turns ${this.maxTurns} reached)`;
+  }
+
+  /**
+   * After a solo `stop`, optionally run a no-tools synthesis pass so the user sees
+   * grounded content from prior tool messages instead of only `stop.reason`.
+   */
+  private async finalizeAfterStop(
+    messages: ChatMessage[],
+    stopReason: string,
+    hadPriorToolResults: boolean,
+  ): Promise<string> {
+    const trimmedReason = stopReason.trim() || "stopped";
+    if (!hadPriorToolResults) return trimmedReason;
+
+    const syn = await this.opts.llm.chat({
+      messages: [{ role: "system", content: FINAL_SYNTHESIS_SYSTEM }, ...messages],
+      toolChoice: "none",
+    });
+    this.opts.tracer.log("llm-synthesis", { usage: syn.usage ?? null });
+
+    if (syn.message.tool_calls?.length) return trimmedReason;
+
+    const text = (syn.message.content ?? "").trim();
+    return text || trimmedReason;
   }
 
   private makeCatalog() {
@@ -171,6 +223,10 @@ export class AgentLoop {
     if (result.ok) task.invokedThisSession.add(name);
     return result;
   }
+}
+
+function messagesIncludeToolResults(messages: ChatMessage[]): boolean {
+  return messages.some((m) => m.role === "tool");
 }
 
 function safeParse(s: string): unknown {

@@ -155,14 +155,3 @@ npm test             # all workspace tests
 npm test -w @meta-agent/core
 npm test -w @meta-agent/cli
 ```
-
-## Status
-
-POC. All 17 tasks from the v1 implementation plan are complete; 66 tests pass. Known scope limits (intentional):
-
-- No embeddings-based tool search (the hybrid index leaves room for a pluggable embedding backend).
-- No multi-agent / sub-agent orchestration.
-- Tool code is limited to `node:*` builtins; no npm packages inside tools.
-- No web UI — approval happens in the terminal.
-
-See [`docs/meta-tool-design.md`](docs/meta-tool-design.md) §12 for the full list of deferred extensions.

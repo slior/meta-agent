@@ -165,6 +165,7 @@ export class ToolFactory {
   }
 
   private async genDraft(systemPrompt: string): Promise<ToolDraft> {
+    this.opts.tracer.log("factory-gen-draft", { phase: "start" });
     return this.opts.llm.generateStructured<ToolDraft>({
       messages: [{ role: "system", content: systemPrompt }],
       schemaName: "ToolDraft",

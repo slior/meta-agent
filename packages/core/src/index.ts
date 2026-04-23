@@ -4,6 +4,7 @@ export * from "./schemas.ts";
 export * from "./hash.ts";
 export * from "./errors.ts";
 export { Tracer } from "./tracer.ts";
+export type { TraceEvent, TracerObserver, TracerOptions } from "./tracer.ts";
 export type { ToolRegistry } from "./registry/interface.ts";
 export { FsToolRegistry } from "./registry/fs-registry.ts";
 export type { ToolIndex } from "./index-store/interface.ts";
