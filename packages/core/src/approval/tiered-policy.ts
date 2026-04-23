@@ -1,5 +1,13 @@
 import type { ApprovalRecord, ApprovalToken, Permissions, Tool, ToolDraft, ToolResult } from "../types.ts";
-import type { ApprovalPolicy, ApprovalPrompter, ExecutionDecision, Gate1Decision, RiskTier } from "./interface.ts";
+import {
+  APPROVAL_DECISION,
+  type ApprovalPolicy,
+  type ApprovalPrompter,
+  type ExecutionDecision,
+  type Gate1Decision,
+  RISK_TIER,
+  type RiskTier,
+} from "./interface.ts";
 
 const SECRET_PATTERN = /TOKEN|KEY|SECRET|PASS/i;
 
@@ -10,13 +18,13 @@ function pathOutsideWorkspace(path: string, workspace: string): boolean {
 }
 
 export function riskTier(perms: Permissions, workspace: string): RiskTier {
-  if (perms.net !== "none") return "elevated";
-  if (perms.fsWrite.some((p) => pathOutsideWorkspace(p, workspace))) return "elevated";
-  if (perms.fsRead.some((p) => pathOutsideWorkspace(p, workspace))) return "elevated";
-  if (perms.env.some((v) => SECRET_PATTERN.test(v))) return "elevated";
-  if (perms.fsWrite.length > 0) return "medium";
-  if (perms.env.length > 0) return "medium";
-  return "low";
+  if (perms.net !== "none") return RISK_TIER.elevated;
+  if (perms.fsWrite.some((p) => pathOutsideWorkspace(p, workspace))) return RISK_TIER.elevated;
+  if (perms.fsRead.some((p) => pathOutsideWorkspace(p, workspace))) return RISK_TIER.elevated;
+  if (perms.env.some((v) => SECRET_PATTERN.test(v))) return RISK_TIER.elevated;
+  if (perms.fsWrite.length > 0) return RISK_TIER.medium;
+  if (perms.env.length > 0) return RISK_TIER.medium;
+  return RISK_TIER.low;
 }
 
 export type TieredOpts = {
@@ -38,13 +46,13 @@ export class TieredApprovalPolicy implements ApprovalPolicy {
 
   async reviewDraft(draft: ToolDraft, smokeTest: ToolResult): Promise<Gate1Decision> {
     if (this.yolo) {
-      return { decision: "approve", alwaysApprove: true, notes: "yolo" };
+      return { decision: APPROVAL_DECISION.approve, alwaysApprove: true, notes: "yolo" };
     }
     return this.prompter.promptGate1(draft, smokeTest);
   }
 
   async checkExecution(tool: Tool, args: unknown, approval: ApprovalRecord | null): Promise<ExecutionDecision> {
-    if (this.yolo) return { decision: "approve", token: newToken(), cacheForSession: false };
+    if (this.yolo) return { decision: APPROVAL_DECISION.approve, token: newToken(), cacheForSession: false };
 
     if (approval && approval.hash !== tool.manifest.hash) {
       const r = await this.prompter.promptGate23(tool, args, riskTier(tool.manifest.permissions, this.workspace));
@@ -54,14 +62,14 @@ export class TieredApprovalPolicy implements ApprovalPolicy {
     const tier = riskTier(tool.manifest.permissions, this.workspace);
     const cacheKey = tool.manifest.hash;
 
-    if (tier === "low") return { decision: "approve", token: newToken(), cacheForSession: false };
+    if (tier === RISK_TIER.low) return { decision: APPROVAL_DECISION.approve, token: newToken(), cacheForSession: false };
 
-    if (approval?.alwaysApprove) return { decision: "approve", token: newToken(), cacheForSession: false };
+    if (approval?.alwaysApprove) return { decision: APPROVAL_DECISION.approve, token: newToken(), cacheForSession: false };
 
-    if (this.sessionCache.get(cacheKey)) return { decision: "approve", token: newToken(), cacheForSession: false };
+    if (this.sessionCache.get(cacheKey)) return { decision: APPROVAL_DECISION.approve, token: newToken(), cacheForSession: false };
 
     const r = await this.prompter.promptGate23(tool, args, tier);
-    if (r.decision === "approve" && r.cacheForSession) this.sessionCache.set(cacheKey, true);
+    if (r.decision === APPROVAL_DECISION.approve && r.cacheForSession) this.sessionCache.set(cacheKey, true);
     return r;
   }
 }

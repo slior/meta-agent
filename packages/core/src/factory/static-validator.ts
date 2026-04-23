@@ -1,4 +1,5 @@
-import type { ToolDraft } from "../types.ts";
+import type { Permissions, ToolDraft } from "../types.ts";
+import { PERMISSIONS_NET, TOOL_KIND } from "../types.ts";
 
 const ALLOWED_NODE_MODULES = new Set([
   "node:path", "node:url", "node:util", "node:buffer",
@@ -20,7 +21,17 @@ const IMPORT_RE = /\bimport\s+(?:[\s\S]*?)from\s+['"]([^'"]+)['"]/g;
 const SIDE_EFFECT_IMPORT_RE = /\bimport\s+['"]([^'"]+)['"]/g;
 const REQUIRE_RE = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-const INVOKE_TOOL_RE = /\binvokeTool\s*\(\s*['"]([^'"]+)['"]/g;
+
+/** Tool manifest `name`: leading lowercase letter, then lowercase letters, digits, or hyphen (max length enforced by pattern). */
+const TOOL_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+
+/** Node's built-in `fetch` (v18+); permission rules match other HTTP client modules. */
+const NODE_FETCH_MODULE = "node:fetch" as const;
+
+/** Name used in generated composite tool code; must match {@link INVOKE_TOOL_RE}. */
+const INVOKE_TOOL_CALLEE = "invokeTool";
+const INVOKE_TOOL_RE = new RegExp(String.raw`\b${INVOKE_TOOL_CALLEE}\s*\(\s*['"]([^'"]+)['"]`, "g");
+
 const EVAL_RE = /\b(?:eval|Function)\s*\(/;
 
 export type ValidationContext = {
@@ -32,6 +43,20 @@ export type ValidationOk = { ok: true };
 export type ValidationFail = { ok: false; errors: string[] };
 export type ValidationResult = ValidationOk | ValidationFail;
 
+/**
+ * Extracts all static and dynamic import module names from the provided code string.
+ *
+ * This function scans the input JavaScript/TypeScript code for the following module inclusion patterns:
+ *   - ES6 import statements (e.g., `import foo from "bar"` and `import "bar"`)
+ *   - CommonJS `require()` calls (e.g., `const foo = require("bar")`)
+ *   - Dynamic `import()` expressions (e.g., `const mod = await import("bar")`)
+ *
+ * It uses a set of regular expressions to match all such patterns and collects the module specifiers (strings).
+ * Duplicates are removed in the returned array.
+ *
+ * @param code - Source code string to scan for import/module references.
+ * @returns Array of module names referenced by import/require/dynamic import statements.
+ */
 export function extractImports(code: string): string[] {
   const out = new Set<string>();
   for (const re of [IMPORT_RE, SIDE_EFFECT_IMPORT_RE, REQUIRE_RE, DYNAMIC_IMPORT_RE]) {
@@ -41,6 +66,20 @@ export function extractImports(code: string): string[] {
   return Array.from(out);
 }
 
+/**
+ * Extracts all tool names invoked via invokeTool() calls in the given source code.
+ *
+ * This function scans the provided JavaScript/TypeScript code string for usages of
+ * the invokeTool(name, args) pattern and collects all unique tool name strings
+ * passed as the first argument to the invokeTool function.
+ *
+ * Example matched patterns:
+ *   invokeTool("tool-name", {...})
+ *   invokeTool('other-tool', ...)
+ *
+ * @param code - The source code to scan for invokeTool() calls.
+ * @returns Array of tool name strings found as first argument to invokeTool().
+ */
 export function extractInvokeToolCalls(code: string): string[] {
   const out = new Set<string>();
   INVOKE_TOOL_RE.lastIndex = 0;
@@ -99,8 +138,8 @@ function validateDraftStructure(draft: ToolDraft, errs: string[]): void {
       }
     }
   }
-  if (d.kind !== "atomic" && d.kind !== "composite") {
-    errs.push(`kind must be "atomic" or "composite" (got ${valueKind(d.kind)}).`);
+  if (d.kind !== TOOL_KIND.atomic && d.kind !== TOOL_KIND.composite) {
+    errs.push(`kind must be "${TOOL_KIND.atomic}" or "${TOOL_KIND.composite}" (got ${valueKind(d.kind)}).`);
   }
   if (d.smokeTestInput === undefined) {
     errs.push(
@@ -109,35 +148,40 @@ function validateDraftStructure(draft: ToolDraft, errs: string[]): void {
   }
 }
 
-export function staticValidateDraft(draft: ToolDraft, ctx: ValidationContext): ValidationResult {
-  const errs: string[] = [];
+function validateToolIdentity(draft: ToolDraft, ctx: ValidationContext, errs: string[]): void {
+  if (typeof draft.name !== "string") return;
+  if (!TOOL_NAME_PATTERN.test(draft.name)) errs.push(`invalid name '${draft.name}'`);
+  if (ctx.existingNames.has(draft.name)) errs.push(`name '${draft.name}' already exists`);
+  if (ctx.tombstoned.has(draft.name)) errs.push(`name '${draft.name}' is tombstoned`);
+}
 
-  validateDraftStructure(draft, errs);
-
-  if (typeof draft.name === "string") {
-    if (!/^[a-z][a-z0-9-]{0,63}$/.test(draft.name)) errs.push(`invalid name '${draft.name}'`);
-    if (ctx.existingNames.has(draft.name)) errs.push(`name '${draft.name}' already exists`);
-    if (ctx.tombstoned.has(draft.name)) errs.push(`name '${draft.name}' is tombstoned`);
-  }
-
+function validateEvalInCode(draft: ToolDraft, errs: string[]): void {
   if (typeof draft.code === "string" && EVAL_RE.test(draft.code)) errs.push("eval/Function() not permitted");
+}
 
-  const pe = draft.permissions;
+function validatePermissionsBlock(pe: unknown, errs: string[]): void {
   if (!pe || typeof pe !== "object") {
     errs.push("permissions must be an object");
-  } else {
-    if (!Array.isArray(pe.fsRead)) errs.push("permissions.fsRead must be an array");
-    if (!Array.isArray(pe.fsWrite)) errs.push("permissions.fsWrite must be an array");
-    if (!Array.isArray(pe.netAllowlist)) errs.push("permissions.netAllowlist must be an array");
-    if (!Array.isArray(pe.env)) errs.push("permissions.env must be an array");
-    if (pe.net !== "none" && pe.net !== "allowlist") {
-      errs.push('permissions.net must be "none" or "allowlist"');
-    }
+    return;
   }
+  const p = pe as Permissions;
+  if (!Array.isArray(p.fsRead)) errs.push("permissions.fsRead must be an array");
+  if (!Array.isArray(p.fsWrite)) errs.push("permissions.fsWrite must be an array");
+  if (!Array.isArray(p.netAllowlist)) errs.push("permissions.netAllowlist must be an array");
+  if (!Array.isArray(p.env)) errs.push("permissions.env must be an array");
+  if (p.net !== PERMISSIONS_NET.none && p.net !== PERMISSIONS_NET.allowlist) {
+    errs.push(`permissions.net must be "${PERMISSIONS_NET.none}" or "${PERMISSIONS_NET.allowlist}"`);
+  }
+}
 
+function validateImportsAgainstPermissions(draft: ToolDraft, errs: string[]): void {
+  const pe = draft.permissions;
   const imports = typeof draft.code === "string" ? extractImports(draft.code) : [];
   for (const mod of imports) {
-    if (FORBIDDEN_MODULES.has(mod)) { errs.push(`forbidden import '${mod}'`); continue; }
+    if (FORBIDDEN_MODULES.has(mod)) {
+      errs.push(`forbidden import '${mod}'`);
+      continue;
+    }
     if (FS_MODULES.has(mod)) {
       const fsReadLen = Array.isArray(pe?.fsRead) ? pe.fsRead.length : 0;
       const fsWriteLen = Array.isArray(pe?.fsWrite) ? pe.fsWrite.length : 0;
@@ -146,26 +190,61 @@ export function staticValidateDraft(draft: ToolDraft, ctx: ValidationContext): V
       }
       continue;
     }
-    if (NET_MODULES.has(mod) || mod === "node:fetch") {
-      if (pe?.net === "none") errs.push(`import of '${mod}' requires net permission`);
+    if (NET_MODULES.has(mod) || mod === NODE_FETCH_MODULE) {
+      if (pe?.net === PERMISSIONS_NET.none) errs.push(`import of '${mod}' requires net permission`);
       continue;
     }
     if (ALLOWED_NODE_MODULES.has(mod)) continue;
     if (!mod.startsWith("node:")) errs.push(`non-node import '${mod}' not allowed (v1 allows only node:* modules)`);
     else errs.push(`node module '${mod}' not in allowlist`);
   }
+}
 
+function validateInvokeToolConsistency(draft: ToolDraft, ctx: ValidationContext, errs: string[]): void {
   const calls = typeof draft.code === "string" ? extractInvokeToolCalls(draft.code) : [];
-  if (draft.kind === "atomic" && calls.length > 0) {
-    errs.push(`atomic tool must not call invokeTool (found: ${calls.join(",")})`);
+  if (draft.kind === TOOL_KIND.atomic && calls.length > 0) {
+    errs.push(`${TOOL_KIND.atomic} tool must not call ${INVOKE_TOOL_CALLEE} (found: ${calls.join(",")})`);
   }
-  if (draft.kind === "composite" && Array.isArray(draft.dependencies)) {
+  if (draft.kind === TOOL_KIND.composite && Array.isArray(draft.dependencies)) {
     const declared = new Set(draft.dependencies);
     const actual = new Set(calls);
-    for (const dep of declared) if (!actual.has(dep)) errs.push(`declared dep '${dep}' has no invokeTool call site`);
-    for (const a of actual) if (!declared.has(a)) errs.push(`invokeTool('${a}') has no declared dependency`);
-    for (const dep of declared) if (!ctx.existingNames.has(dep)) errs.push(`dependency '${dep}' does not exist in registry`);
+    for (const dep of declared) {
+      if (!actual.has(dep)) errs.push(`declared dep '${dep}' has no ${INVOKE_TOOL_CALLEE} call site`);
+    }
+    for (const a of actual) {
+      if (!declared.has(a)) errs.push(`${INVOKE_TOOL_CALLEE}('${a}') has no declared dependency`);
+    }
+    for (const dep of declared) {
+      if (!ctx.existingNames.has(dep)) errs.push(`dependency '${dep}' does not exist in registry`);
+    }
   }
+}
+
+/**
+ * Performs static validation on a tool draft before it is accepted or approved.
+ * This function checks the following aspects of the draft:
+ *   - Structural correctness (required fields, types, presence of code, etc.)
+ *   - Tool identity (uniqueness, allowed characters, collision with existing names)
+ *   - Absence of forbidden dynamic evaluation constructs (such as eval)
+ *   - Permissions block validity (structure, allowed/enabled values)
+ *   - Import statements alignment with declared permissions and allowed modules
+ *   - Consistency of invokeTool calls with declared dependencies and registry existence
+ *
+ * All validation errors are accumulated and returned if any are found.
+ *
+ * @param draft The ToolDraft object to statically validate.
+ * @param ctx ValidationContext containing information about the existing registry/tools.
+ * @returns {ValidationResult} An object with ok: true if valid, or ok: false and errors: string[] if invalid.
+ */
+export function staticValidateDraft(draft: ToolDraft, ctx: ValidationContext): ValidationResult {
+  const errs: string[] = [];
+
+  validateDraftStructure(draft, errs);
+  validateToolIdentity(draft, ctx, errs);
+  validateEvalInCode(draft, errs);
+  validatePermissionsBlock(draft.permissions, errs);
+  validateImportsAgainstPermissions(draft, errs);
+  validateInvokeToolConsistency(draft, ctx, errs);
 
   if (errs.length > 0) return { ok: false, errors: errs };
   return { ok: true };

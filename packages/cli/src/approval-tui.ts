@@ -1,12 +1,13 @@
 import type { Interface as ReadlinePromisesInterface } from "node:readline/promises";
-import type {
-  ApprovalPrompter,
-  ExecutionDecision,
-  Gate1Decision,
-  RiskTier,
-  Tool,
-  ToolDraft,
-  ToolResult,
+import {
+  APPROVAL_DECISION,
+  type ApprovalPrompter,
+  type ExecutionDecision,
+  type Gate1Decision,
+  type RiskTier,
+  type Tool,
+  type ToolDraft,
+  type ToolResult,
 } from "@meta-agent/core";
 
 export type { ReadlinePromisesInterface };
@@ -38,10 +39,10 @@ export class CliApprovalPrompter implements ApprovalPrompter {
     const answer = (await this.rl.question("\n[a]pprove / [A]lways-approve / [r]eject? ")).trim();
     if (answer === "r" || answer === "R" || answer === "reject") {
       const reason = (await this.rl.question("Reason: ")).trim() || "rejected";
-      return { decision: "reject", reason };
+      return { decision: APPROVAL_DECISION.reject, reason };
     }
     const always = answer === "A" || answer === "always-approve";
-    return { decision: "approve", alwaysApprove: always };
+    return { decision: APPROVAL_DECISION.approve, alwaysApprove: always };
   }
 
   async promptGate23(tool: Tool, args: unknown, tier: RiskTier): Promise<ExecutionDecision> {
@@ -49,8 +50,8 @@ export class CliApprovalPrompter implements ApprovalPrompter {
     console.log(`Args: ${JSON.stringify(args)}`);
     console.log(`Permissions: ${JSON.stringify(tool.manifest.permissions)}`);
     const answer = (await this.rl.question("[a]pprove-once / [s]ession-approve / [r]eject? ")).trim();
-    if (answer === "r" || answer === "R") return { decision: "reject", reason: "user rejected" };
+    if (answer === "r" || answer === "R") return { decision: APPROVAL_DECISION.reject, reason: "user rejected" };
     const cache = answer === "s" || answer === "S";
-    return { decision: "approve", token: Math.random().toString(36).slice(2), cacheForSession: cache };
+    return { decision: APPROVAL_DECISION.approve, token: Math.random().toString(36).slice(2), cacheForSession: cache };
   }
 }

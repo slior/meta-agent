@@ -1,9 +1,11 @@
+import { PERMISSIONS_NET, TOOL_KIND } from "./types.ts";
+
 export const PERMISSIONS_SCHEMA = {
   type: "object",
   properties: {
     fsRead: { type: "array", items: { type: "string" } },
     fsWrite: { type: "array", items: { type: "string" } },
-    net: { type: "string", enum: ["none", "allowlist"] },
+    net: { type: "string", enum: [PERMISSIONS_NET.none, PERMISSIONS_NET.allowlist] },
     netAllowlist: { type: "array", items: { type: "string" } },
     env: { type: "array", items: { type: "string" } },
   },
@@ -32,7 +34,7 @@ export const MANIFEST_SCHEMA = {
     },
     hash: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
     createdAt: { type: "string", format: "date-time" },
-    kind: { type: "string", enum: ["atomic", "composite"] },
+    kind: { type: "string", enum: [TOOL_KIND.atomic, TOOL_KIND.composite] },
   },
   required: [
     "name", "description", "rationale", "inputSchema", "outputShape",
@@ -53,7 +55,7 @@ export const TOOL_DRAFT_SCHEMA = {
     code: { type: "string", minLength: 1, maxLength: 50000 },
     dependencies: { type: "array", items: { type: "string" } },
     smokeTestInput: {},
-    kind: { type: "string", enum: ["atomic", "composite"] },
+    kind: { type: "string", enum: [TOOL_KIND.atomic, TOOL_KIND.composite] },
   },
   required: [
     "name", "description", "rationale", "inputSchema", "outputShape",

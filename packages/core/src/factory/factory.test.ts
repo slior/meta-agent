@@ -7,6 +7,7 @@ import { ToolFactory } from "./factory.ts";
 import { MockLLMProvider } from "../llm/mock-provider.ts";
 import { FsToolRegistry } from "../registry/fs-registry.ts";
 import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
+import { APPROVAL_DECISION } from "../approval/interface.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
 import type { ToolDraft } from "../types.ts";
@@ -30,7 +31,10 @@ test("factory: happy path — static passes, smoke passes, approval auto-approve
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider().onStructured<ToolDraft>(() => GOOD_DRAFT);
-    const prompter = { promptGate1: async () => ({ decision: "approve" as const, alwaysApprove: false }), promptGate23: async () => { throw new Error("no"); } };
+    const prompter = {
+      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: false }),
+      promptGate23: async () => { throw new Error("no"); },
+    };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
@@ -53,7 +57,10 @@ test("factory: static failure triggers repair loop", async () => {
     const llm = new MockLLMProvider()
       .onStructured<ToolDraft>(() => ({ ...GOOD_DRAFT, name: "BadName" }))
       .onStructured<ToolDraft>(() => GOOD_DRAFT);
-    const prompter = { promptGate1: async () => ({ decision: "approve" as const, alwaysApprove: false }), promptGate23: async () => { throw new Error("no"); } };
+    const prompter = {
+      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: false }),
+      promptGate23: async () => { throw new Error("no"); },
+    };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
@@ -73,7 +80,10 @@ test("factory: rejected by reviewer returns failure", async () => {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider().onStructured<ToolDraft>(() => GOOD_DRAFT);
-    const prompter = { promptGate1: async () => ({ decision: "reject" as const, reason: "no thanks" }), promptGate23: async () => { throw new Error("no"); } };
+    const prompter = {
+      promptGate1: async () => ({ decision: APPROVAL_DECISION.reject, reason: "no thanks" }),
+      promptGate23: async () => { throw new Error("no"); },
+    };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });

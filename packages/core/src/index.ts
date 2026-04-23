@@ -16,6 +16,7 @@ export type { ToolRegistry } from "./registry/interface.ts";
 export { FsToolRegistry } from "./registry/fs-registry.ts";
 export type { ToolIndex } from "./index-store/interface.ts";
 export { HybridToolIndex } from "./index-store/hybrid-index.ts";
+export { APPROVAL_DECISION, RISK_TIER } from "./approval/interface.ts";
 export type { ApprovalPolicy, ApprovalPrompter, Gate1Decision, ExecutionDecision, RiskTier } from "./approval/interface.ts";
 export { TieredApprovalPolicy, riskTier } from "./approval/tiered-policy.ts";
 export type { LLMProvider, ChatRequest, ChatResponse, ChatMessage, ChatRole, ToolDef, ToolCall, StructuredRequest } from "./llm/interface.ts";

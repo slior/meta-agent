@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { APPROVAL_DECISION, RISK_TIER } from "./interface.ts";
 import { TieredApprovalPolicy, riskTier } from "./tiered-policy.ts";
 import type { ApprovalRecord, Permissions, Tool } from "../types.ts";
 
@@ -20,23 +21,26 @@ function mkTool(perms: Partial<Permissions> = {}, hash = "sha256:" + "a".repeat(
 }
 
 test("riskTier: empty permissions => low", () => {
-  assert.equal(riskTier(mkTool().manifest.permissions, "/wkspc"), "low");
+  assert.equal(riskTier(mkTool().manifest.permissions, "/wkspc"), RISK_TIER.low);
 });
 
 test("riskTier: fs-write inside workspace => medium", () => {
-  assert.equal(riskTier(mkTool({ fsWrite: ["/wkspc/data"] }).manifest.permissions, "/wkspc"), "medium");
+  assert.equal(riskTier(mkTool({ fsWrite: ["/wkspc/data"] }).manifest.permissions, "/wkspc"), RISK_TIER.medium);
 });
 
 test("riskTier: fs-write outside workspace => elevated", () => {
-  assert.equal(riskTier(mkTool({ fsWrite: ["/etc"] }).manifest.permissions, "/wkspc"), "elevated");
+  assert.equal(riskTier(mkTool({ fsWrite: ["/etc"] }).manifest.permissions, "/wkspc"), RISK_TIER.elevated);
 });
 
 test("riskTier: any net allowlist => elevated", () => {
-  assert.equal(riskTier(mkTool({ net: "allowlist", netAllowlist: ["api.example.com"] }).manifest.permissions, "/wkspc"), "elevated");
+  assert.equal(
+    riskTier(mkTool({ net: "allowlist", netAllowlist: ["api.example.com"] }).manifest.permissions, "/wkspc"),
+    RISK_TIER.elevated,
+  );
 });
 
 test("riskTier: env var matching SECRET pattern => elevated", () => {
-  assert.equal(riskTier(mkTool({ env: ["OPENAI_API_KEY"] }).manifest.permissions, "/wkspc"), "elevated");
+  assert.equal(riskTier(mkTool({ env: ["OPENAI_API_KEY"] }).manifest.permissions, "/wkspc"), RISK_TIER.elevated);
 });
 
 test("checkExecution auto-approves low with no prompt", async () => {
@@ -45,7 +49,7 @@ test("checkExecution auto-approves low with no prompt", async () => {
   const tool = mkTool();
   const approval: ApprovalRecord = { hash: tool.manifest.hash, approvedAt: "x", approvedBy: "u", alwaysApprove: false };
   const r = await policy.checkExecution(tool, {}, approval);
-  assert.equal(r.decision, "approve");
+  assert.equal(r.decision, APPROVAL_DECISION.approve);
 });
 
 test("checkExecution prompts on elevated; cached after alwaysApprove", async () => {
@@ -54,11 +58,14 @@ test("checkExecution prompts on elevated; cached after alwaysApprove", async () 
   let prompts = 0;
   const prompter = {
     promptGate1: async () => { throw new Error("no"); },
-    promptGate23: async () => { prompts++; return { decision: "approve" as const, token: "tok", cacheForSession: true }; },
+    promptGate23: async () => {
+      prompts++;
+      return { decision: APPROVAL_DECISION.approve, token: "tok", cacheForSession: true };
+    },
   };
   const policy = new TieredApprovalPolicy(prompter, { workspace: "/wkspc" });
   const r = await policy.checkExecution(tool, {}, approval);
-  assert.equal(r.decision, "approve");
+  assert.equal(r.decision, APPROVAL_DECISION.approve);
   assert.equal(prompts, 0);
 });
 
@@ -68,11 +75,14 @@ test("checkExecution rejects when approval hash mismatches", async () => {
   let reject = 0;
   const prompter = {
     promptGate1: async () => { throw new Error("no"); },
-    promptGate23: async () => { reject++; return { decision: "reject" as const, reason: "user" }; },
+    promptGate23: async () => {
+      reject++;
+      return { decision: APPROVAL_DECISION.reject, reason: "user" };
+    },
   };
   const policy = new TieredApprovalPolicy(prompter, { workspace: "/wkspc" });
   const r = await policy.checkExecution(tool, {}, approval);
-  assert.equal(r.decision, "reject");
+  assert.equal(r.decision, APPROVAL_DECISION.reject);
   assert.equal(reject, 1);
 });
 
@@ -84,5 +94,5 @@ test("yolo mode auto-approves everything without prompting", async () => {
   };
   const policy = new TieredApprovalPolicy(prompter, { workspace: "/wkspc", yolo: true });
   const r = await policy.checkExecution(tool, {}, null);
-  assert.equal(r.decision, "approve");
+  assert.equal(r.decision, APPROVAL_DECISION.approve);
 });

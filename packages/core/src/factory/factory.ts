@@ -1,4 +1,4 @@
-import type { ApprovalPolicy } from "../approval/interface.ts";
+import { APPROVAL_DECISION, type ApprovalPolicy } from "../approval/interface.ts";
 import { CHAT_ROLE, type LLMProvider } from "../llm/interface.ts";
 import type { Sandbox } from "../sandbox/interface.ts";
 import type { ToolRegistry } from "../registry/interface.ts";
@@ -130,7 +130,7 @@ export class ToolFactory {
 
   private async presentAndSave(draft: ToolDraft, smoke: ToolResult): Promise<FactoryOutcome> {
     const decision = await this.opts.approval.reviewDraft(draft, smoke);
-    if (decision.decision === "reject") {
+    if (decision.decision === APPROVAL_DECISION.reject) {
       this.opts.tracer.log("tool-rejected", { name: draft.name, reason: decision.reason });
       return { ok: false, reason: decision.reason };
     }

@@ -4,8 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  AgentLoop, CHAT_ROLE, FsToolRegistry, HybridToolIndex, META_FN, NodePermissionSandbox,
-  TieredApprovalPolicy, ToolFactory, Tracer, MockLLMProvider,
+  AgentLoop, APPROVAL_DECISION, CHAT_ROLE, FsToolRegistry, HybridToolIndex, META_FN, MockLLMProvider,
+  NodePermissionSandbox, TieredApprovalPolicy, ToolFactory, Tracer,
 } from "./index.ts";
 import type { ChatResponse, ToolDraft } from "./index.ts";
 
@@ -66,7 +66,10 @@ test("E2E: agent finds-nothing, proposes tool, then invokes it", async () => {
       .onChat(() => asst(null, [{ id: "3", name: META_FN.invokeTool, args: { name: "double-int", args: { x: 7 } } }]))
       .onChat(() => asst("result: 14"));
 
-    const prompter = { promptGate1: async () => ({ decision: "approve" as const, alwaysApprove: true }), promptGate23: async () => { throw new Error("no"); } };
+    const prompter = {
+      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: true }),
+      promptGate23: async () => { throw new Error("no"); },
+    };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir, yolo: false });
     const tracer = await Tracer.open(join(dir, "traces"), "e2e");
     const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
@@ -93,7 +96,10 @@ test("E2E: composite invokeTool runs with no ambient authority (depth 1 inner ca
       .onStructured<ToolDraft>(() => DOUBLE_DRAFT)
       .onStructured<ToolDraft>(() => PLUS_ONE_THEN_DOUBLE_DRAFT);
 
-    const prompter = { promptGate1: async () => ({ decision: "approve" as const, alwaysApprove: true }), promptGate23: async () => { throw new Error("no"); } };
+    const prompter = {
+      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: true }),
+      promptGate23: async () => { throw new Error("no"); },
+    };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir, yolo: false });
     const tracer = await Tracer.open(join(dir, "traces"), "e2e2");
     const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });

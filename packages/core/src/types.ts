@@ -1,7 +1,15 @@
+/** Values for {@link Permissions.net}; keep aligned with static validation and JSON schemas. */
+export const PERMISSIONS_NET = {
+  none: "none",
+  allowlist: "allowlist",
+} as const;
+
+export type NetPermissionMode = (typeof PERMISSIONS_NET)[keyof typeof PERMISSIONS_NET];
+
 export type Permissions = {
   fsRead: string[];
   fsWrite: string[];
-  net: "none" | "allowlist";
+  net: NetPermissionMode;
   netAllowlist: string[];
   env: string[];
 };
@@ -11,7 +19,13 @@ export type Limits = {
   maxOldSpaceSizeMb: number;
 };
 
-export type ToolKind = "atomic" | "composite";
+/** Values for {@link ToolManifest.kind} / {@link ToolDraft.kind}. */
+export const TOOL_KIND = {
+  atomic: "atomic",
+  composite: "composite",
+} as const;
+
+export type ToolKind = (typeof TOOL_KIND)[keyof typeof TOOL_KIND];
 
 export type ToolManifest = {
   name: string;

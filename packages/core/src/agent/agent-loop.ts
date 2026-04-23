@@ -1,5 +1,5 @@
 import Ajv from "ajv";
-import type { ApprovalPolicy } from "../approval/interface.ts";
+import { APPROVAL_DECISION, type ApprovalPolicy } from "../approval/interface.ts";
 import { CHAT_ROLE, type LLMProvider, type ChatMessage, type ToolCall, type ToolDef } from "../llm/interface.ts";
 import type { Sandbox } from "../sandbox/interface.ts";
 import type { ToolRegistry } from "../registry/interface.ts";
@@ -379,7 +379,7 @@ export class AgentLoop {
 
     const approval = await this.opts.registry.getApproval(name);
     const decision = await this.opts.approval.checkExecution(tool, input, approval);
-    if (decision.decision === "reject") {
+    if (decision.decision === APPROVAL_DECISION.reject) {
       this.opts.tracer.log(TRACE_KIND_EXECUTION_DENIED, { name, reason: decision.reason });
       return toolError("rejected_by_user", decision.reason);
     }
