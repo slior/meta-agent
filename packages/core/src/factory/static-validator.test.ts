@@ -63,6 +63,76 @@ test("allows fs import when fsRead declared", () => {
   assert.equal(r.ok, true);
 });
 
+test("rejects permissions.fsWrite when not an array", () => {
+  const r = staticValidateDraft(draft({
+    permissions: {
+      fsRead: ["/tmp"],
+      fsWrite: {} as unknown as string[],
+      net: "none",
+      netAllowlist: [],
+      env: [],
+    },
+    code: `import { readFile } from "node:fs/promises";\nexport async function run(){}`,
+  }), { existingNames: new Set(), tombstoned: new Set() });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes("fsWrite")));
+});
+
+test("rejects permissions.fsRead when not an array", () => {
+  const r = staticValidateDraft(draft({
+    permissions: {
+      fsRead: "/tmp" as unknown as string[],
+      fsWrite: [],
+      net: "none",
+      netAllowlist: [],
+      env: [],
+    },
+    code: `export async function run(){}`,
+  }), { existingNames: new Set(), tombstoned: new Set() });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes("fsRead")));
+});
+
+test("rejects missing dependencies array with actionable message", () => {
+  const r = staticValidateDraft(
+    draft({ dependencies: undefined as unknown as string[] }),
+    { existingNames: new Set(), tombstoned: new Set() },
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    const msg = r.errors.find((e) => e.includes("dependencies"));
+    assert.ok(msg);
+    assert.match(msg!, /atomic tool use \[\]/);
+    assert.match(msg!, /structured output/i);
+  }
+});
+
+test("rejects undefined rationale and outputShape", () => {
+  const r = staticValidateDraft(
+    draft({
+      rationale: undefined as unknown as string,
+      outputShape: undefined as unknown as Record<string, unknown>,
+    }),
+    { existingNames: new Set(), tombstoned: new Set() },
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.ok(r.errors.some((e) => e.includes("rationale")));
+    assert.ok(r.errors.some((e) => e.includes("outputShape")));
+  }
+});
+
+test("rejects non-string dependency entries", () => {
+  const r = staticValidateDraft(
+    draft({
+      dependencies: ["ok", null as unknown as string],
+    }),
+    { existingNames: new Set(), tombstoned: new Set() },
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes("dependencies[1]")));
+});
+
 test("composite: declared deps must match invokeTool call sites", () => {
   const r = staticValidateDraft(draft({
     kind: "composite",

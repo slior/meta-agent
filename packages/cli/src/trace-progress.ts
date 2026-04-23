@@ -24,7 +24,15 @@ export function formatTraceEvent(e: TraceEvent): string | null {
     case "tool-call": {
       const name = String(e.data.name ?? "unknown");
       const ok = e.data.ok as boolean;
-      return `[meta-agent] Tool call: ${name} → ${ok ? "ok" : "failed"}`;
+      let line = `[meta-agent] Tool call: ${name} → ${ok ? "ok" : "failed"}`;
+      if (!ok) {
+        const res = e.data.result as { ok?: boolean; error?: { kind?: string; message?: string } } | undefined;
+        if (res && res.ok === false && res.error?.message) {
+          const kind = res.error.kind ?? "error";
+          line += ` — ${kind}: ${res.error.message}`;
+        }
+      }
+      return line;
     }
     case "tool-invoked": {
       const name = String(e.data.name ?? "unknown");

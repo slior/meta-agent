@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentLoop, INVOKE_FAILURE_RECOVERY_USER } from "./agent-loop.ts";
+import { AgentLoop, EMPTY_FIND_RECOVERY_USER, INVOKE_FAILURE_RECOVERY_USER } from "./agent-loop.ts";
 import { MockLLMProvider } from "../llm/mock-provider.ts";
 import { FsToolRegistry } from "../registry/fs-registry.ts";
 import { HybridToolIndex } from "../index-store/hybrid-index.ts";
@@ -12,6 +12,35 @@ import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
 import type { ChatResponse } from "../llm/interface.ts";
+import type { ApprovalRecord, Tool } from "../types.ts";
+
+const SAMPLE_HASH = "sha256:" + "a".repeat(64);
+
+function sampleTool(name: string): Tool {
+  return {
+    code: "export async function run(i){return i;}",
+    manifest: {
+      name,
+      description: `desc of ${name}`,
+      rationale: "r",
+      inputSchema: { type: "object" },
+      outputShape: { type: "object" },
+      permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+      dependencies: [],
+      limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
+      hash: SAMPLE_HASH,
+      createdAt: "2026-04-21T00:00:00Z",
+      kind: "atomic",
+    },
+  };
+}
+
+const sampleApproval: ApprovalRecord = {
+  hash: SAMPLE_HASH,
+  approvedAt: "2026-04-21T00:00:00Z",
+  approvedBy: "test",
+  alwaysApprove: false,
+};
 
 function asst(content: string | null, toolCalls?: Array<{ id: string; name: string; args: unknown }>): ChatResponse {
   return {
@@ -69,6 +98,41 @@ test("agent: find_tool then stop", async () => {
     assert.ok(
       !JSON.stringify(secondReq.messages).includes("invoke_tool_recovery_hint"),
       "no recovery user line when invoke_tool did not fail",
+    );
+    const emptyFindMsg = secondReq.messages.find(
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("find_tool_empty_recovery_hint"),
+    );
+    assert.equal(emptyFindMsg?.content, EMPTY_FIND_RECOVERY_USER);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: find_tool with hits does not inject empty-find recovery", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(sampleTool("alpha"), sampleApproval);
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "1", name: "find_tool", args: { query: "alpha" } }]))
+      .onChat(() => asst(null, [{ id: "2", name: "stop", args: { reason: "done" } }]))
+      .onChat(() => asst("ok"));
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    const out = await loop.run("task");
+    assert.equal(out, "ok");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    assert.ok(
+      !JSON.stringify(secondReq.messages).includes("find_tool_empty_recovery_hint"),
+      "no empty-find nudge when find_tool returned matches",
     );
     await tracer.close();
   } finally {
@@ -181,6 +245,35 @@ test("agent: failed invoke_tool injects recovery user before next chat", async (
       (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("invoke_tool_recovery_hint"),
     );
     assert.equal(recoveryMsg?.content, INVOKE_FAILURE_RECOVERY_USER);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: empty find_tool injects recovery user before next chat", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "f1", name: "find_tool", args: { query: "anything" } }]))
+      .onChat(() => asst("done"));
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    const out = await loop.run("search");
+    assert.equal(out, "done");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const recoveryMsg = secondReq.messages.find(
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("find_tool_empty_recovery_hint"),
+    );
+    assert.equal(recoveryMsg?.content, EMPTY_FIND_RECOVERY_USER);
     await tracer.close();
   } finally {
     await rm(dir, { recursive: true, force: true });

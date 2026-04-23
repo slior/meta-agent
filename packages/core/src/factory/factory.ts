@@ -4,6 +4,7 @@ import type { Sandbox } from "../sandbox/interface.ts";
 import type { ToolRegistry } from "../registry/interface.ts";
 import type { ApprovalRecord, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
 import { hashTool } from "../hash.ts";
+import { normalizePermissions } from "../permissions-normalize.ts";
 import { staticValidateDraft, type ValidationResult } from "./static-validator.ts";
 import { atomicPrompt, compositePrompt, reactivePrompt, repairPrompt, DRAFT_SCHEMA } from "./code-gen-prompts.ts";
 import type { Tracer } from "../tracer.ts";
@@ -154,7 +155,7 @@ export class ToolFactory {
       rationale: draft.rationale,
       inputSchema: draft.inputSchema,
       outputShape: draft.outputShape,
-      permissions: draft.permissions,
+      permissions: normalizePermissions(draft.permissions),
       dependencies: draft.dependencies,
       limits: { timeoutMs: draft.limits?.timeoutMs ?? 30000, maxOldSpaceSizeMb: draft.limits?.maxOldSpaceSizeMb ?? 256 },
       createdAt: new Date().toISOString(),

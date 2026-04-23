@@ -3,6 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizePermissions } from "../permissions-normalize.ts";
 import type { Tool, ToolResult } from "../types.ts";
 import { toolError } from "../errors.ts";
 import type { ExecuteOpts, InvokeToolHandler, Sandbox } from "./interface.ts";
@@ -53,7 +54,7 @@ export class NodePermissionSandbox implements Sandbox {
 
   private run(tool: Tool, args: unknown, toolPath: string, onInvoke: InvokeToolHandler | undefined, depth: number): Promise<ToolResult> {
     return new Promise<ToolResult>((resolve) => {
-      const perms = tool.manifest.permissions;
+      const perms = normalizePermissions(tool.manifest.permissions);
       const flags: string[] = [
         "--permission",
         "--experimental-transform-types",

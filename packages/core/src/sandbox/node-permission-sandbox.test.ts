@@ -31,6 +31,26 @@ test("sandbox returns success for ok-tool", async () => {
   if (r.ok) assert.deepEqual(r.value, { doubled: 6 });
 });
 
+test("sandbox normalizes missing fsWrite so execute does not throw", async () => {
+  const sb = new NodePermissionSandbox({ workspace: FIXTURES });
+  const base = mkTool("ok", { fsRead: [FIXTURES] });
+  const tool: Tool = {
+    ...base,
+    manifest: {
+      ...base.manifest,
+      permissions: {
+        fsRead: [FIXTURES],
+        net: "none",
+        netAllowlist: [],
+        env: [],
+      } as unknown as Tool["manifest"]["permissions"],
+    },
+  };
+  const r = await sb.execute(tool, { x: 3 }, "token", { toolPath: join(FIXTURES, "ok-tool.ts") });
+  assert.equal(r.ok, true);
+  if (r.ok) assert.deepEqual(r.value, { doubled: 6 });
+});
+
 test("sandbox blocks fs-write when permission not granted", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sandbox-"));
   try {

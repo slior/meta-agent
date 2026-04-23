@@ -6,6 +6,7 @@ import type { ToolRegistry } from "../registry/interface.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
 import type { ToolResult } from "../types.ts";
 import type { Tracer } from "../tracer.ts";
+import { coerceStringifiedJsonInput, rootJsonSchemaKind } from "./coerce-tool-input.ts";
 import { renderSystemPrompt } from "./system-prompt.ts";
 import { META_TOOL_DEFS, META_TOOL_NAMES } from "./meta-tools.ts";
 import { ToolFactory } from "../factory/factory.ts";
@@ -19,6 +20,12 @@ export const INVOKE_FAILURE_RECOVERY_USER =
   "invoke_tool_recovery_hint: A previous invoke_tool call in this turn failed or was rejected. " +
   "Your next step must use meta-tools: try find_tool with a better query, list_tools, or propose_new_tool / propose_composite_tool if no tool fits. " +
   "Do not end with only an apology unless you have genuinely exhausted these options.";
+
+/** Injected after a batch where find_tool succeeded with no matches; exported for tests. */
+export const EMPTY_FIND_RECOVERY_USER =
+  "find_tool_empty_recovery_hint: A find_tool call in this batch returned ok: true with an empty value (no ranked hits). " +
+  "That means no registry tool matched — it is not an error. Next use propose_new_tool or propose_composite_tool, or list_tools if you need the full catalog; you may try find_tool again with a sharper query. " +
+  "Do not answer with only prose unless you have genuinely exhausted these options.";
 
 export type ToolInvokedEvent = { name: string; args: unknown; ok: boolean; durationMs: number };
 
@@ -76,11 +83,18 @@ export class AgentLoop {
       const deferStop = hasStop && hasOther;
 
       let invokeFailedThisBatch = false;
+      let emptyFindThisBatch = false;
       for (const call of resp.message.tool_calls) {
         const parsedArgs = safeParse(call.function.arguments);
         const result = await this.dispatch(call.function.name, parsedArgs, task, 0);
         invokeFailedThisBatch ||= call.function.name === "invoke_tool" && !result.ok;
-        this.opts.tracer.log("tool-call", { name: call.function.name, args: parsedArgs, ok: result.ok });
+        emptyFindThisBatch ||= call.function.name === "find_tool" && findToolReturnedNoMatches(result);
+        this.opts.tracer.log("tool-call", {
+          name: call.function.name,
+          args: parsedArgs,
+          ok: result.ok,
+          result: toolResultForTrace(result),
+        });
         if (call.function.name === "stop" && !deferStop) {
           const reason = (parsedArgs as { reason?: string })?.reason ?? "stopped";
           const hadPriorToolResults = messagesIncludeToolResults(messages);
@@ -99,6 +113,9 @@ export class AgentLoop {
       }
       if (invokeFailedThisBatch) {
         messages.push({ role: "user", content: INVOKE_FAILURE_RECOVERY_USER });
+      }
+      if (emptyFindThisBatch) {
+        messages.push({ role: "user", content: EMPTY_FIND_RECOVERY_USER });
       }
     }
     return `(max turns ${this.maxTurns} reached)`;
@@ -202,26 +219,51 @@ export class AgentLoop {
     const tool = await this.opts.registry.get(name);
     if (!tool) return toolError("unknown_tool", `no tool named '${name}'`);
 
-    const valid = this.ajv.validate(tool.manifest.inputSchema, args);
+    const schema = tool.manifest.inputSchema as Record<string, unknown>;
+    const input = coerceStringifiedJsonInput(args, rootJsonSchemaKind(schema));
+
+    const valid = this.ajv.validate(tool.manifest.inputSchema, input);
     if (!valid) return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
 
     const approval = await this.opts.registry.getApproval(name);
-    const decision = await this.opts.approval.checkExecution(tool, args, approval);
+    const decision = await this.opts.approval.checkExecution(tool, input, approval);
     if (decision.decision === "reject") {
       this.opts.tracer.log("execution-denied", { name, reason: decision.reason });
       return toolError("rejected_by_user", decision.reason);
     }
 
     const started = Date.now();
-    const result = await this.opts.sandbox.execute(tool, args, decision.token, {
+    const result = await this.opts.sandbox.execute(tool, input, decision.token, {
       depth,
       onInvokeTool: (subName, subArgs) => this.dispatchTool(subName, subArgs, task, depth + 1),
     });
     const durationMs = Date.now() - started;
     this.opts.tracer.log("tool-invoked", { name, duration: durationMs, ok: result.ok });
-    this.opts.onToolInvoked?.({ name, args, ok: result.ok, durationMs });
+    this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs });
     if (result.ok) task.invokedThisSession.add(name);
     return result;
+  }
+}
+
+function findToolReturnedNoMatches(result: ToolResult): boolean {
+  return result.ok && Array.isArray(result.value) && result.value.length === 0;
+}
+
+const TRACE_RESULT_MAX_STRING = 16_384;
+
+/** JSON-serializable copy of a tool result for trace files (truncates huge strings). */
+function toolResultForTrace(result: ToolResult): unknown {
+  try {
+    return JSON.parse(
+      JSON.stringify(result, (_key, v) => {
+        if (typeof v === "string" && v.length > TRACE_RESULT_MAX_STRING) {
+          return `${v.slice(0, TRACE_RESULT_MAX_STRING)}…(truncated, ${v.length} chars total)`;
+        }
+        return v;
+      }),
+    );
+  } catch {
+    return { ok: result.ok, traceNote: "result could not be serialized for trace" };
   }
 }
 
