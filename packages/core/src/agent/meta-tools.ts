@@ -1,4 +1,4 @@
-import type { ToolDef } from "../llm/interface.ts";
+import { CHAT_TOOL_TYPE, type ToolDef } from "../llm/interface.ts";
 
 /** LLM-visible names for meta-tool functions; must stay aligned with {@link META_TOOL_DEFS}. */
 export const META_FN = {
@@ -25,7 +25,7 @@ export const FIND_TOOL_TOP_K = {
 
 function metaToolDef(name: MetaFnName, description: string, parameters: Record<string, unknown>): ToolDef {
   return {
-    type: "function",
+    type: CHAT_TOOL_TYPE.function,
     function: { name, description, parameters },
   };
 }

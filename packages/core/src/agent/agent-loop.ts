@@ -1,6 +1,14 @@
 import Ajv from "ajv";
 import { APPROVAL_DECISION, type ApprovalPolicy } from "../approval/interface.ts";
-import { CHAT_ROLE, type LLMProvider, type ChatMessage, type ToolCall, type ToolDef } from "../llm/interface.ts";
+import {
+  CHAT_ROLE,
+  CHAT_TOOL_CHOICE,
+  CHAT_TOOL_TYPE,
+  type ChatMessage,
+  type LLMProvider,
+  type ToolCall,
+  type ToolDef,
+} from "../llm/interface.ts";
 import type { Sandbox } from "../sandbox/interface.ts";
 import type { ToolRegistry } from "../registry/interface.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
@@ -249,7 +257,7 @@ export class AgentLoop {
 
     const syn = await this.opts.llm.chat({
       messages: [{ role: CHAT_ROLE.system, content: FINAL_SYNTHESIS_SYSTEM }, ...messages],
-      toolChoice: "none",
+      toolChoice: CHAT_TOOL_CHOICE.none,
     });
     this.opts.tracer.log(TRACE_KIND_LLM_SYNTHESIS, { usage: syn.usage ?? null });
 
@@ -282,7 +290,7 @@ export class AgentLoop {
       const t = await this.opts.registry.get(name);
       if (!t) continue;
       defs.push({
-        type: "function",
+        type: CHAT_TOOL_TYPE.function,
         function: {
           name: t.manifest.name,
           description: t.manifest.description,

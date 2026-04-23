@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  AgentLoop, APPROVAL_DECISION, CHAT_ROLE, FsToolRegistry, HybridToolIndex, META_FN, MockLLMProvider,
+  AgentLoop, APPROVAL_DECISION, CHAT_ROLE, CHAT_TOOL_TYPE, FsToolRegistry, HybridToolIndex, META_FN, MockLLMProvider,
   NodePermissionSandbox, TieredApprovalPolicy, ToolFactory, Tracer,
 } from "./index.ts";
 import type { ChatResponse, ToolDraft } from "./index.ts";
@@ -15,7 +15,13 @@ function asst(content: string | null, calls: Array<{ id: string; name: string; a
       role: CHAT_ROLE.assistant,
       content,
       ...(calls.length
-        ? { tool_calls: calls.map((c) => ({ id: c.id, type: "function" as const, function: { name: c.name, arguments: JSON.stringify(c.args) } })) }
+        ? {
+            tool_calls: calls.map((c) => ({
+              id: c.id,
+              type: CHAT_TOOL_TYPE.function,
+              function: { name: c.name, arguments: JSON.stringify(c.args) },
+            })),
+          }
         : {}),
     },
   };
