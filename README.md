@@ -92,58 +92,7 @@ When neither flag is passed, debug follows **`META_AGENT_DEBUG`**: enabled only 
 
 ## Configuration
 
-The CLI reads a single JSON file (default `./config/meta-agent.json`, override with `--config`). All relative paths inside it are resolved against the **config file's directory**, not the CWD.
-
-Further reading:
-- [`docs/tool-permissions.md`](docs/tool-permissions.md) — complete permission + approval model, including Gate 1/2/3 behavior and `--yolo` mode.
-
-Example (from [`config/meta-agent.example.json`](config/meta-agent.example.json)):
-
-```json
-{
-  "llm": {
-    "baseURL": "https://api.openai.com/v1",
-    "model": "gpt-4o-mini",
-    "apiKeyEnv": "OPENAI_API_KEY"
-  },
-  "workspace": "./workspace",
-  "toolsDir": "./tools",
-  "tracesDir": "./traces",
-  "yolo": false,
-  "maxTurns": 20,
-  "sandbox": {
-    "maxDepth": 8,
-    "maxOutputBytes": 1048576
-  }
-}
-```
-
-### LLM
-
-- `llm.model` (**required**) — model name the provider expects, e.g. `gpt-4o-mini`, `gpt-4.1-mini`, `llama3.1:8b-instruct`, etc.
-- `llm.apiKeyEnv` (**required**) — name of the environment variable that holds the API key. The CLI reads `process.env[<apiKeyEnv>]` after loading optional `.env` files (see Quickstart) and errors out if it is unset.
-- `llm.baseURL` (optional) — OpenAI-compatible endpoint. Omit for `https://api.openai.com/v1`. Common alternatives:
-  - OpenAI: leave unset or `https://api.openai.com/v1`
-  - [Ollama](https://ollama.com/) locally: `http://localhost:11434/v1` (set `OPENAI_API_KEY=ollama` or anything non-empty)
-  - [vLLM](https://github.com/vllm-project/vllm): `http://localhost:8000/v1`
-  - OpenAI-compatible gateways: whatever the gateway publishes
-
-### Paths
-
-- `workspace` — the directory the sandbox grants read access to by default. Set this to the project you want the agent to operate on.
-- `toolsDir` — where the registry persists generated tools.
-- `tracesDir` — where session JSONL traces are written.
-
-### Agent & sandbox
-
-- `maxTurns` — soft cap on LLM turns per user request (default 20).
-- `yolo` — if `true`, skip the human approval prompt on tool execution (tool creation still prompts). Can also be toggled per-invocation with `--yolo`.
-- `sandbox.maxDepth` — maximum depth of composite `invokeTool` recursion (default 8).
-- `sandbox.maxOutputBytes` — per-invocation stdout/stderr byte cap before the child is killed and the call fails with `output_truncated` (default 1 MiB).
-
-### Tool-level permissions
-
-Per-tool permissions are declared in each tool's `manifest.json` and authored by the LLM at creation time (then reviewed at the approval gate). They control what the sandbox grants to that specific tool: `fsRead`, `fsWrite`, `net` (`"none"` or `"allowlist"`) + `netAllowlist`, and `env` (environment variable names). These are not set in the CLI config — they're intrinsic to each tool and surfaced for review at the approval gate.
+Full reference (every JSON field, CLI flags, environment variables, defaults, and how they interact): [`docs/configuration.md`](docs/configuration.md). Permission and approval model (gates, `yolo`, tool manifests): [`docs/tool-permissions.md`](docs/tool-permissions.md).
 
 ## Project layout
 
