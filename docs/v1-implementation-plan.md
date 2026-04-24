@@ -8,7 +8,7 @@
 
 **Tech Stack:**
 
-- Node.js ≥ 22.7 (needs `--permission` and `--experimental-transform-types`; `--experimental-strip-types` is on by default from 22.6+ but does not handle TypeScript-only syntax like access modifiers, so transform-types is required)
+- Node.js ≥ 25.0 (needs `--permission`, `--experimental-transform-types`, and for network tools [`--allow-net`](https://nodejs.org/api/cli.html#allow-net))
 - TypeScript (source) run directly via Node type-stripping — no transpile step for generated tools
 - `openai` SDK for LLM calls (configurable `baseURL` → OpenAI/gateways/Ollama/vLLM)
 - `ajv` for JSON Schema validation
@@ -50,7 +50,7 @@ Legend: ⬜ pending · ⏳ in progress · ✅ complete
 Before starting, confirm the environment:
 
 ```bash
-node --version    # must be >= 22.7.0 (22.22+ recommended for stable transform-types)
+node --version    # must be >= 25.0.0
 git --version
 ```
 
@@ -67,7 +67,7 @@ meta-agent/
 ├── package.json                          # root, workspaces, scripts
 ├── tsconfig.base.json                    # shared TS config
 ├── .gitignore
-├── .nvmrc                                # 22.22.2
+├── .nvmrc                                # 25.0.0
 ├── docs/
 │   ├── meta-tool-design.md               # (exists)
 │   └── v1-implementation-plan.md         # (this file)
@@ -140,7 +140,7 @@ meta-agent/
 - **Step 1: Create `.nvmrc`**
 
 ```
-22.22.2
+25.0.0
 ```
 
 - **Step 2: Create `.gitignore`**
@@ -164,7 +164,7 @@ traces/*.jsonl
   "name": "meta-agent",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.7.0" },
+  "engines": { "node": ">=25.0.0" },
   "workspaces": ["packages/*"],
   "scripts": {
     "test": "npm test --workspaces --if-present",
@@ -172,7 +172,7 @@ traces/*.jsonl
     "cli": "node --experimental-transform-types --no-warnings packages/cli/src/bin.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.7.0",
+    "@types/node": "^25.0.0",
     "typescript": "^5.6.0"
   }
 }
@@ -4050,7 +4050,7 @@ git commit -m "Task 17: E2E tests — agent creates tool, invokes it, composite 
 
 After all 17 tasks are complete, write a minimal README at the repo root describing:
 
-- Prerequisites (Node ≥ 22.6, OpenAI-compatible API key).
+- Prerequisites (Node ≥ 25.0, OpenAI-compatible API key).
 - Setup (`npm install`, copy example config, export API key env var).
 - Running the REPL (`npm run cli`).
 - Example interactions (ask the agent to do something simple; `/tools`, `/compose`, `/exit`).

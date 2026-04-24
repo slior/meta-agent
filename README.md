@@ -19,17 +19,17 @@ See [`docs/meta-tool-design.md`](docs/meta-tool-design.md) for the full design r
 
 ## Requirements
 
-- **Node.js ≥ 22.7** (the sandbox and TypeScript source loading both rely on features in this range). A `.nvmrc` pins `22.22.2`.
+- **Node.js ≥ 25.0** (required for the permission model’s `--allow-net` flag used by the sandbox, plus TypeScript-on-the-fly loading). A `.nvmrc` pins `25.0.0`.
 - An OpenAI-compatible API endpoint + API key.
 
-Why 22.7+: tools are TypeScript source loaded via Node's `--experimental-transform-types` (no transpile step), and the sandbox relies on the `--permission` flag and `--allow-fs-read` / `--allow-fs-write` controls.
+Why 25+: tools are TypeScript source loaded via Node's `--experimental-transform-types` (no transpile step), and the sandbox relies on `--permission` plus `--allow-fs-read` / `--allow-fs-write` and, for network tools, [`--allow-net`](https://nodejs.org/api/cli.html#allow-net) (available from Node 25.0.0 onward).
 
 ## Installation
 
 ```bash
 git clone <this-repo> meta-agent
 cd meta-agent
-nvm use            # picks up 22.22.2 from .nvmrc
+nvm use            # picks up 25.0.0 from .nvmrc
 npm install
 ```
 
@@ -39,8 +39,6 @@ Verify the setup:
 npm run typecheck
 npm test
 ```
-
-You should see 64 passing tests in `@meta-agent/core` and 2 in `@meta-agent/cli`.
 
 ## Quickstart
 
@@ -85,6 +83,12 @@ Anything else you type becomes a task for the agent.
 
 - `--config <path>` / `-c <path>` — path to the config JSON (default `./config/meta-agent.json`).
 - `--yolo` — skip human approval for tool execution (creation always prompts). Use with care — tools can still only do what their manifest declares, but this removes the interactive gate.
+- `--debug` — enable low-level debug logging to **stderr** (raw OpenAI chat completion payloads today; may include prompts, tool arguments, and user content). Off by default.
+- `--no-debug` — force debug off for this process (overrides `META_AGENT_DEBUG`). If both `--debug` and `--no-debug` are passed, `--debug` wins.
+
+When neither flag is passed, debug follows **`META_AGENT_DEBUG`**: enabled only when set to `1`, `true`, or `yes` (case-insensitive). Any other value is treated as off. This variable is not read from the JSON config file.
+
+**Security:** do not enable debug in shared logs or CI unless you accept leaking conversation content.
 
 ## Configuration
 

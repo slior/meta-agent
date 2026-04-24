@@ -11,6 +11,11 @@ import {
   type StructuredRequest,
   type ToolCall,
 } from "./interface.ts";
+import {
+  DEBUG_KIND_OPENAI_CHAT_COMPLETION,
+  DEBUG_KIND_OPENAI_STRUCTURED_COMPLETION,
+  type DebugSink,
+} from "../util/debug.ts";
 
 /** `response_format.type` for JSON-schema structured completions. */
 const RESPONSE_FORMAT_JSON_SCHEMA = "json_schema" as const;
@@ -46,6 +51,8 @@ export type OpenAIProviderOpts = {
   baseURL?: string;
   model: string;
   requestTimeoutMs?: number;
+  /** Optional project debug sink; raw completion objects may contain prompts and tool payloads. */
+  debug?: DebugSink;
 };
 
 /**
@@ -74,6 +81,8 @@ export class OpenAIProvider implements LLMProvider {
   /** The model name to use for all requests (e.g., "gpt-3.5-turbo", "gpt-4"). */
   private readonly model: string;
 
+  private readonly debug: DebugSink | undefined;
+
   /**
    * Constructs an OpenAIProvider.
    * @param opts - Configuration options for provider instance (API key, endpoint, model, timeout, etc).
@@ -85,6 +94,16 @@ export class OpenAIProvider implements LLMProvider {
       timeout: opts.requestTimeoutMs,
     });
     this.model = opts.model;
+    this.debug = opts.debug;
+  }
+
+  private emitDebug(kind: string, data: unknown): void {
+    if (!this.debug) return;
+    try {
+      this.debug({ kind, data });
+    } catch {
+      /* sink errors must not break LLM calls */
+    }
   }
 
   /**
@@ -118,6 +137,7 @@ export class OpenAIProvider implements LLMProvider {
       ...(req.tools ? { tools: req.tools } : {}),
     };
     const resp = await this.client.chat.completions.create(params);
+    this.emitDebug(DEBUG_KIND_OPENAI_CHAT_COMPLETION, resp);
     const choice = resp.choices[0];
     if (!choice) throw new Error("OpenAI response had no choices");
     const msg = choice.message;
@@ -156,6 +176,7 @@ export class OpenAIProvider implements LLMProvider {
       },
     };
     const resp = await this.client.chat.completions.create(params);
+    this.emitDebug(DEBUG_KIND_OPENAI_STRUCTURED_COMPLETION, resp);
     const content = resp.choices[0]?.message.content;
     if (!content) throw new Error("OpenAI structured response had no content");
     return JSON.parse(content) as T;

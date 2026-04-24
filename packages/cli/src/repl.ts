@@ -2,8 +2,9 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import {
   AgentLoop, FsToolRegistry, HybridToolIndex, NodePermissionSandbox,
-  OpenAIProvider, TieredApprovalPolicy, ToolFactory, Tracer,
+  OpenAIProvider, SANDBOX_DEBUG_ENV, TieredApprovalPolicy, ToolFactory, Tracer,
 } from "@meta-agent/core";
+import { createStderrDebugSink } from "./resolve-debug.ts";
 import { mkdir } from "node:fs/promises";
 import { CliApprovalPrompter } from "./approval-tui.ts";
 import { runComposeInteraction, type InvocationRecord } from "./compose.ts";
@@ -13,6 +14,10 @@ import type { Config } from "./config.ts";
 export async function runRepl(config: Config): Promise<void> {
   const apiKey = process.env[config.llm.apiKeyEnv];
   if (!apiKey) throw new Error(`API key env var ${config.llm.apiKeyEnv} is not set`);
+
+  if (config.debug && process.env[SANDBOX_DEBUG_ENV] === undefined) {
+    process.env[SANDBOX_DEBUG_ENV] = "1";
+  }
 
   await mkdir(config.workspace, { recursive: true });
   await mkdir(config.toolsDir, { recursive: true });
@@ -32,6 +37,7 @@ export async function runRepl(config: Config): Promise<void> {
     apiKey,
     ...(config.llm.baseURL !== undefined ? { baseURL: config.llm.baseURL } : {}),
     model: config.llm.model,
+    ...(config.debug ? { debug: createStderrDebugSink() } : {}),
   });
 
   const sessionId = Date.now().toString(36);

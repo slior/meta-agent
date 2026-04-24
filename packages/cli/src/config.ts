@@ -7,6 +7,8 @@ export type Config = {
   toolsDir: string;
   tracesDir: string;
   yolo: boolean;
+  /** Set by CLI after loadConfig; not read from config JSON. */
+  debug?: boolean;
   maxTurns: number;
   sandbox: { maxDepth: number; maxOutputBytes: number };
 };

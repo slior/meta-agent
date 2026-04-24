@@ -2,7 +2,7 @@
   "name": "meta-agent",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.7.0" },
+  "engines": { "node": ">=25.0.0" },
   "workspaces": ["packages/*"],
   "scripts": {
     "test": "npm test --workspaces --if-present",
@@ -10,7 +10,7 @@
     "cli": "node --experimental-transform-types --no-warnings packages/cli/src/bin.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.7.0",
+    "@types/node": "^25.0.0",
     "typescript": "^5.6.0"
   }
 }

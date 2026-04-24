@@ -8,7 +8,7 @@ import type { Tool, ToolResult } from "../types.ts";
 import { PERMISSIONS_NET } from "../types.ts";
 import { toolError } from "../errors.ts";
 import type { ExecuteOpts, InvokeToolHandler, Sandbox } from "./interface.ts";
-import { sandboxDebug, sandboxLogError, SANDBOX_DEBUG_ENV } from "./sandbox-debug.ts";
+import { sandboxDebug, sandboxDebugEnabled, sandboxLogError, SANDBOX_DEBUG_ENV } from "./sandbox-debug.ts";
 import {
   META_AGENT_NET_ALLOWLIST_ENV,
   SANDBOX_STDIO_OP,
@@ -19,6 +19,22 @@ import {
 
 /** Mutable completion flag shared by stdout line handler, timeout, and other child lifecycle hooks. */
 type ChildRunResolutionState = { resolved: boolean };
+
+/** Keep a bounded tail of child stderr for diagnostics when the process dies without a result frame. */
+const CHILD_STDERR_ACCUM_MAX = 8192;
+const CHILD_STDERR_IN_MESSAGE_MAX = 2048;
+
+function recordChildStderrChunk(prior: string, chunk: string): string {
+  const next = prior + chunk;
+  return next.length > CHILD_STDERR_ACCUM_MAX ? next.slice(-CHILD_STDERR_ACCUM_MAX) : next;
+}
+
+function appendChildStderrTail(message: string, stderrTail: string): string {
+  const s = stderrTail.trim();
+  if (!s) return message;
+  const clipped = s.length > CHILD_STDERR_IN_MESSAGE_MAX ? s.slice(-CHILD_STDERR_IN_MESSAGE_MAX) : s;
+  return `${message}\n--- child stderr (tail) ---\n${clipped}`;
+}
 
 /**
  * Parses one JSON line from the tool child stdout: `invokeTool` (reply on stdin) or `result` (resolve promise).
@@ -190,8 +206,8 @@ export class NodePermissionSandbox implements Sandbox {
       env[META_AGENT_NET_ALLOWLIST_ENV] = perms.netAllowlist.join(",");
     }
     env.PATH = process.env.PATH ?? "";
-    if (process.env[SANDBOX_DEBUG_ENV] !== undefined) {
-      env[SANDBOX_DEBUG_ENV] = process.env[SANDBOX_DEBUG_ENV];
+    if (sandboxDebugEnabled()) {
+      env[SANDBOX_DEBUG_ENV] = process.env[SANDBOX_DEBUG_ENV] ?? "1";
     }
     return env;
   }
@@ -228,14 +244,27 @@ export class NodePermissionSandbox implements Sandbox {
 
       let stdoutBuf = "";
       let stderrBytes = 0;
+      let stderrTail = "";
       const state: ChildRunResolutionState = { resolved: false };
       const truncateAt = this.maxOutputBytes;
+
+      child.on("spawn", () => {
+        sandboxDebug(
+          "sandbox tool child spawned",
+          `pid=${child.pid} tool=${tool.manifest.name} net=${perms.net} netAllowlist=${perms.netAllowlist.length} nodeFlagCount=${flags.length} timeoutMs=${tool.manifest.limits.timeoutMs}`,
+        );
+      });
 
       const timer = setTimeout(() => {
         if (state.resolved) return;
         state.resolved = true;
         child.kill("SIGKILL");
-        resolve(toolError("timeout", `exceeded timeout of ${tool.manifest.limits.timeoutMs}ms`));
+        const msg = appendChildStderrTail(
+          `exceeded timeout of ${tool.manifest.limits.timeoutMs}ms`,
+          stderrTail,
+        );
+        sandboxDebug("sandbox tool child killed (timeout)", `tool=${tool.manifest.name} pid=${child.pid}`);
+        resolve(toolError("timeout", msg));
       }, tool.manifest.limits.timeoutMs);
 
       const stdoutLineOpts = {
@@ -270,12 +299,18 @@ export class NodePermissionSandbox implements Sandbox {
 
       /** Bound total stderr size so a noisy child cannot exhaust memory. */
       child.stderr.on("data", (c: Buffer) => {
+        stderrTail = recordChildStderrChunk(stderrTail, c.toString());
         stderrBytes += c.length;
         if (stderrBytes > truncateAt && !state.resolved) {
           state.resolved = true;
           clearTimeout(timer);
           child.kill("SIGKILL");
-          resolve(toolError("output_truncated", `stderr exceeded ${truncateAt} bytes`));
+          resolve(
+            toolError(
+              "output_truncated",
+              appendChildStderrTail(`stderr exceeded ${truncateAt} bytes`, stderrTail),
+            ),
+          );
         }
       });
 
@@ -290,18 +325,25 @@ export class NodePermissionSandbox implements Sandbox {
         if (state.resolved) return;
         state.resolved = true;
         clearTimeout(timer);
-        if (signal) resolve(toolError("runtime_error", `child killed by signal ${signal}`));
-        else {
-          resolve(
-            toolError(
-              "runtime_error",
-              `child exited with code ${code ?? "null"} without emitting a result frame`,
-            ),
+        if (signal) {
+          const sigMsg = appendChildStderrTail(`child killed by signal ${signal} without emitting a result frame`, stderrTail);
+          sandboxDebug(
+            "sandbox tool child closed (signal, no result)",
+            `tool=${tool.manifest.name} signal=${signal} pid=${child.pid}`,
           );
+          resolve(toolError("runtime_error", sigMsg));
+        } else {
+          const base = `child exited with code ${code ?? "null"} without emitting a result frame`;
+          sandboxDebug(
+            "sandbox tool child closed (code, no result)",
+            `tool=${tool.manifest.name} code=${code ?? "null"} pid=${child.pid}`,
+          );
+          resolve(toolError("runtime_error", appendChildStderrTail(base, stderrTail)));
         }
       });
 
       const argsFrame: SandboxChildStdinArgsFrame = { op: SANDBOX_STDIO_OP.args, args };
+      sandboxDebug("sandbox writing args frame to child stdin", `tool=${tool.manifest.name} op=${argsFrame.op}`);
       child.stdin.write(JSON.stringify(argsFrame) + "\n");
     });
   }

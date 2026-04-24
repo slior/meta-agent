@@ -25,9 +25,15 @@ export { OpenAIProvider } from "./llm/openai-provider.ts";
 export { MockLLMProvider } from "./llm/mock-provider.ts";
 export type { Sandbox, InvokeToolHandler, ExecuteOpts } from "./sandbox/interface.ts";
 export { NodePermissionSandbox } from "./sandbox/node-permission-sandbox.ts";
+export { SANDBOX_DEBUG_ENV, sandboxDebugEnabled } from "./sandbox/sandbox-debug.ts";
 export { staticValidateDraft, extractImports, extractInvokeToolCalls } from "./factory/static-validator.ts";
 export { ToolFactory } from "./factory/factory.ts";
 export { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./agent/meta-tools.ts";
 export type { MetaFnName } from "./agent/meta-tools.ts";
 export { renderSystemPrompt } from "./agent/system-prompt.ts";
 export { AgentLoop } from "./agent/agent-loop.ts";
+export {
+  DEBUG_KIND_OPENAI_CHAT_COMPLETION,
+  DEBUG_KIND_OPENAI_STRUCTURED_COMPLETION,
+} from "./util/debug.ts";
+export type { DebugEvent, DebugSink } from "./util/debug.ts";

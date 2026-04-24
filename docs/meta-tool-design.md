@@ -28,9 +28,9 @@
 
 ### 1.3 Runtime prerequisites
 
-- **Node.js ≥ 22.6**, for two built-in capabilities we rely on:
-  - `--permission` model (Node ≥ 20.0) for OS-enforced per-process permission boundaries.
-  - `--experimental-strip-types` (Node ≥ 22.6) for running `.ts` source directly without a transpile step.
+- **Node.js ≥ 25.0**, for built-in capabilities we rely on:
+  - `--permission` model for OS-enforced per-process permission boundaries, including **`--allow-net`** for network tools ([CLI](https://nodejs.org/api/cli.html#allow-net); not available on Node 22 LTS).
+  - `--experimental-transform-types` for running `.ts` tool source directly without a transpile step (handles TypeScript-only syntax beyond strip-types).
 - **OpenAI-compatible Chat Completions endpoint** for the LLM. We use the official `openai` npm SDK and configure its `baseURL`/`apiKey` per deployment; this keeps us provider-agnostic (OpenAI directly, any OpenAI-compatible gateway, local servers like Ollama or vLLM behind an OpenAI-compatible shim, etc.).
 
 ---
@@ -780,7 +780,7 @@ This section records every meaningful choice made during design and what alterna
 
 ### 11.3 Sandboxing
 
-**Chosen:** Node child process per invocation, governed by Node's `--permission` flags (≥ 20) plus `--experimental-strip-types` (≥ 22.6) for TS source. Fresh subprocess per tool call.
+**Chosen:** Node child process per invocation, governed by Node's `--permission` flags (including `--allow-net` when the manifest requests network) plus `--experimental-transform-types` for TS source. Fresh subprocess per tool call.
 
 **Considered:**
 
@@ -831,7 +831,7 @@ This section records every meaningful choice made during design and what alterna
 
 ### 11.7 Tool source language and runtime
 
-**Chosen:** Generated tools are `.ts`, run via Node 22.6+ `--experimental-strip-types`. Fresh subprocess per tool call.
+**Chosen:** Generated tools are `.ts`, run via Node 25+ with `--experimental-transform-types`. Fresh subprocess per tool call.
 
 **Considered:**
 

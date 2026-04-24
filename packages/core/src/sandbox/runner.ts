@@ -6,10 +6,11 @@
  *
  * @module sandbox/runner
  */
+import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolResult } from "../types.ts";
 import { runnerToolError } from "./runner-tool-error.ts";
-import { sandboxDebug, sandboxLogError } from "./sandbox-debug.ts";
+import { sandboxDebug, sandboxDebugEnabled, sandboxLogError } from "./sandbox-debug.ts";
 import {
   META_AGENT_NET_ALLOWLIST_ENV,
   SANDBOX_STDIO_OP,
@@ -22,6 +23,22 @@ const TOOL_PATH_ARG_INDEX = 2;
 
 /** Single JSON object written as one stdout line (newline-terminated). */
 const JSON_LINE_SUFFIX = "\n";
+
+const ARGS_DEBUG_MAX = 500;
+
+function exitRunner(code: number, reason: string): never {
+  sandboxDebug("child runner process.exit", `${reason} code=${code}`);
+  process.exit(code);
+}
+
+function summarizeArgsForDebug(args: unknown): string {
+  try {
+    const s = JSON.stringify(args);
+    return s.length <= ARGS_DEBUG_MAX ? s : `${s.slice(0, ARGS_DEBUG_MAX)}…(${s.length} chars)`;
+  } catch {
+    return "[unserializable args]";
+  }
+}
 
 /**
  * Shape of the tool module’s default export the runner expects: an async or sync `run(input)` function.
@@ -78,8 +95,15 @@ installInvokeToolGlobal();
  * @param netAllowlist - Hostnames permitted for `fetch` (from env, already split).
  */
 function installNetShim(netAllowlist: string[]): void {
-  if (netAllowlist.length === 0) return;
+  if (netAllowlist.length === 0) {
+    sandboxDebug("child runner net shim", "skipped (empty allowlist)");
+    return;
+  }
   const allow = new Set(netAllowlist.map((h) => h.toLowerCase()));
+  sandboxDebug(
+    "child runner net shim",
+    `installed hosts=${netAllowlist.length} sample=${netAllowlist.slice(0, 8).join(",")}${netAllowlist.length > 8 ? "…" : ""}`,
+  );
   const origFetch = globalThis.fetch;
   globalThis.fetch = async (input: unknown, init?: unknown) => {
     const url = typeof input === "string" ? input : (input as { url: string }).url;
@@ -147,12 +171,15 @@ function handleParentStdinJsonLine(line: string): void {
  * @param toolPath - Filesystem path to the tool module (from argv).
  */
 async function loadToolModuleOrEmitError(toolPath: string): Promise<{ run: RunFn } | null> {
+  sandboxDebug("child runner import tool module", `href=${pathToFileURL(toolPath).href}`);
   try {
     const mod = (await import(pathToFileURL(toolPath).href)) as { run: RunFn };
     if (typeof mod.run !== "function") throw new Error("tool does not export a `run` function");
+    sandboxDebug("child runner import ok", basename(toolPath));
     return mod;
   } catch (e) {
     const err = e as Error;
+    sandboxDebug("child runner import failed", err.message);
     writeStdoutFrame(
       childStdoutResultFrame(runnerToolError("runtime_error", `import failed: ${err.message}`)),
     );
@@ -167,11 +194,14 @@ async function loadToolModuleOrEmitError(toolPath: string): Promise<{ run: RunFn
  * @param args - Payload from the parent’s first `args` frame.
  */
 async function runToolAndEmitOutcome(mod: { run: RunFn }, args: unknown): Promise<void> {
+  sandboxDebug("child runner invoking run()", summarizeArgsForDebug(args));
   try {
     const value = await mod.run(args);
+    sandboxDebug("child runner run() returned", "writing success result frame");
     writeStdoutFrame(childStdoutResultFrame({ ok: true, value }));
   } catch (e) {
     const err = e as Error;
+    sandboxDebug("child runner run() threw", err.message);
     writeStdoutFrame(
       childStdoutResultFrame(
         runnerToolError("runtime_error", err.message, { stack: err.stack }),
@@ -185,19 +215,30 @@ async function runToolAndEmitOutcome(mod: { run: RunFn }, args: unknown): Promis
  * Emits structured errors on stdout instead of throwing when bootstrap fails.
  */
 async function main(): Promise<void> {
+  if (sandboxDebugEnabled()) {
+    process.once("exit", (code) => {
+      sandboxDebug("child runner exit event", `code=${String(code)}`);
+    });
+  }
+
   const toolPath = process.argv[TOOL_PATH_ARG_INDEX];
   const netAllowlist = readNetAllowlistFromEnv();
 
+  sandboxDebug(
+    "child runner bootstrap",
+    `pid=${process.pid} node=${process.version} toolPathArg=${toolPath ?? "(missing)"} netAllowlistEntries=${String(netAllowlist.length)}`,
+  );
+
   if (!toolPath) {
     writeStdoutFrame(childStdoutResultFrame(runnerToolError("runtime_error", "runner: missing tool path")));
-    process.exit(0);
+    exitRunner(0, "missing tool path after error frame");
   }
 
   installNetShim(netAllowlist);
 
   const mod = await loadToolModuleOrEmitError(toolPath);
   if (!mod) {
-    process.exit(0);
+    exitRunner(0, "import failed after error frame");
   }
 
   const argsPromise = new Promise<unknown>((resolve) => {
@@ -210,9 +251,12 @@ async function main(): Promise<void> {
     buffer = extendStdinBufferAndDrainLines(buffer, chunk, handleParentStdinJsonLine);
   });
 
+  sandboxDebug("child runner waiting for stdin args frame", "stdin listener attached");
   const args = await argsPromise;
+  sandboxDebug("child runner received args frame", summarizeArgsForDebug(args));
   await runToolAndEmitOutcome(mod, args);
-  process.exit(0);
+  sandboxDebug("child runner finished", "success path");
+  exitRunner(0, "normal completion");
 }
 
 void main().catch((err: unknown) => {

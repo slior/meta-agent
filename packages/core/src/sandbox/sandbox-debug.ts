@@ -11,13 +11,21 @@ function truncateDetail(s: string): string {
 
 function sandboxDebugSilenced(): boolean {
   const v = process.env[SANDBOX_DEBUG_ENV];
-  return v === "0" || v === "false";
+  if (v === undefined || v === "") return true;
+  if (v === "0" || v === "false") return true;
+  return false;
+}
+
+/** True when {@link sandboxDebug} will emit (explicit opt-in via env). */
+export function sandboxDebugEnabled(): boolean {
+  return !sandboxDebugSilenced();
 }
 
 /**
  * Write a diagnostic line to **this** process's stderr (parent sandbox host or child runner).
  *
- * Emits unless `META_AGENT_SANDBOX_DEBUG` is `0` or `false`. Further levels / verbosity can be handled here later.
+ * Emits only when `META_AGENT_SANDBOX_DEBUG` is set to a non-empty value other than `0` or `false`
+ * (e.g. `1` or `verbose`). Child processes inherit the same variable from {@link NodePermissionSandbox}.
  */
 export function sandboxDebug(message: string, detail?: string): void {
   if (sandboxDebugSilenced()) return;
