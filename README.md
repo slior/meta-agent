@@ -4,7 +4,7 @@ A local, TypeScript meta-agent that **creates, composes, and invokes its own too
 
 Every tool runs in a fresh Node subprocess with `--permission` flags derived from a declared manifest, so the agent can only touch the filesystem, network, or environment variables it has explicitly been granted access to. Human approval gates the creation of new tools and (by default) the first execution of anything with elevated permissions.
 
-See [`docs/meta-tool-design.md`](docs/meta-tool-design.md) for the full design rationale and [`docs/v1-implementation-plan.md`](docs/v1-implementation-plan.md) for the task-by-task implementation history.
+See [`docs/meta-tool-design.md`](docs/meta-tool-design.md) for the full design rationale, [`docs/tool-permissions.md`](docs/tool-permissions.md) for a detailed explanation of the tool permission and approval model (including `--yolo`).
 
 ## Features
 
@@ -89,6 +89,9 @@ Anything else you type becomes a task for the agent.
 ## Configuration
 
 The CLI reads a single JSON file (default `./config/meta-agent.json`, override with `--config`). All relative paths inside it are resolved against the **config file's directory**, not the CWD.
+
+Further reading:
+- [`docs/tool-permissions.md`](docs/tool-permissions.md) — complete permission + approval model, including Gate 1/2/3 behavior and `--yolo` mode.
 
 Example (from [`config/meta-agent.example.json`](config/meta-agent.example.json)):
 
