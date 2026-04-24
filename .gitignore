@@ -8,5 +8,6 @@ traces/*.jsonl
 *.log
 .env
 .env.local
+.env.bak
 
 tmp/

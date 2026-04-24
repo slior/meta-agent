@@ -51,7 +51,7 @@ You should see 64 passing tests in `@meta-agent/core` and 2 in `@meta-agent/cli`
    cp config/meta-agent.example.json config/meta-agent.json
    ```
 
-2. **Export your API key** (the env var name must match `llm.apiKeyEnv` in the config; the default is `OPENAI_API_KEY`):
+2. **Provide your API key** (the env var name must match `llm.apiKeyEnv` in the config; the default is `OPENAI_API_KEY`). The CLI loads `.env` from the current working directory first, then `.env` next to the config file (`dirname` of the path passed to `-c`), without overriding variables already set in the shell. Alternatively:
 
    ```bash
    export OPENAI_API_KEY=sk-...
@@ -114,7 +114,7 @@ Example (from [`config/meta-agent.example.json`](config/meta-agent.example.json)
 ### LLM
 
 - `llm.model` (**required**) — model name the provider expects, e.g. `gpt-4o-mini`, `gpt-4.1-mini`, `llama3.1:8b-instruct`, etc.
-- `llm.apiKeyEnv` (**required**) — name of the environment variable that holds the API key. The CLI reads `process.env[<apiKeyEnv>]` at startup and errors out if it is unset.
+- `llm.apiKeyEnv` (**required**) — name of the environment variable that holds the API key. The CLI reads `process.env[<apiKeyEnv>]` after loading optional `.env` files (see Quickstart) and errors out if it is unset.
 - `llm.baseURL` (optional) — OpenAI-compatible endpoint. Omit for `https://api.openai.com/v1`. Common alternatives:
   - OpenAI: leave unset or `https://api.openai.com/v1`
   - [Ollama](https://ollama.com/) locally: `http://localhost:11434/v1` (set `OPENAI_API_KEY=ollama` or anything non-empty)

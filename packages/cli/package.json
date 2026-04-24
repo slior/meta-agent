@@ -9,6 +9,7 @@
     "test": "node --test --experimental-transform-types --no-warnings 'src/**/*.test.ts'"
   },
   "dependencies": {
-    "@meta-agent/core": "*"
+    "@meta-agent/core": "*",
+    "dotenv": "^16.4.7"
   }
 }
