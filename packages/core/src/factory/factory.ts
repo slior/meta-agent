@@ -7,7 +7,7 @@ import { hashTool } from "../hash.ts";
 import { normalizePermissions } from "../permissions-normalize.ts";
 import { staticValidateDraft, type ValidationResult } from "./static-validator.ts";
 import { atomicPrompt, compositePrompt, reactivePrompt, repairPrompt, DRAFT_SCHEMA } from "./code-gen-prompts.ts";
-import type { Tracer } from "../tracer.ts";
+import { TRACE_KIND_FACTORY_REPAIR_LLM, type Tracer } from "../tracer.ts";
 
 export type CreateAtomicReq = {
   intent: string;
@@ -175,6 +175,7 @@ export class ToolFactory {
   }
 
   private async repair(previous: ToolDraft, errors: string[]): Promise<ToolDraft> {
+    this.opts.tracer.log(TRACE_KIND_FACTORY_REPAIR_LLM, { phase: "start" });
     return this.opts.llm.generateStructured<ToolDraft>({
       messages: [
         { role: CHAT_ROLE.system, content: "Produce a corrected ToolDraft." },

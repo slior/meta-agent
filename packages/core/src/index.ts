@@ -6,9 +6,13 @@ export * from "./errors.ts";
 export {
   Tracer,
   TRACE_KIND_EXECUTION_DENIED,
+  TRACE_KIND_FACTORY_REPAIR_LLM,
   TRACE_KIND_LLM_SYNTHESIS,
+  TRACE_KIND_LLM_SYNTHESIS_START,
   TRACE_KIND_LLM_TURN,
+  TRACE_KIND_LLM_TURN_START,
   TRACE_KIND_TOOL_CALL,
+  TRACE_KIND_TOOL_DISPATCH_START,
   TRACE_KIND_TOOL_INVOKED,
 } from "./tracer.ts";
 export type { TraceEvent, TracerObserver, TracerOptions } from "./tracer.ts";

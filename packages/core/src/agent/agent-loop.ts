@@ -16,8 +16,11 @@ import type { ToolResult } from "../types.ts";
 import {
   TRACE_KIND_EXECUTION_DENIED,
   TRACE_KIND_LLM_SYNTHESIS,
+  TRACE_KIND_LLM_SYNTHESIS_START,
   TRACE_KIND_LLM_TURN,
+  TRACE_KIND_LLM_TURN_START,
   TRACE_KIND_TOOL_CALL,
+  TRACE_KIND_TOOL_DISPATCH_START,
   TRACE_KIND_TOOL_INVOKED,
   type Tracer,
 } from "../tracer.ts";
@@ -151,6 +154,7 @@ export class AgentLoop {
   ): Promise<string | null> {
     const system = renderSystemPrompt({ catalog: this.makeCatalog() });
     const tools = await this.registeredToolsForTurn(task);
+    this.opts.tracer.log(TRACE_KIND_LLM_TURN_START, { turn });
     const resp = await this.opts.llm.chat({
       messages: [{ role: CHAT_ROLE.system, content: system }, ...messages],
       tools,
@@ -198,6 +202,7 @@ export class AgentLoop {
     deferStop: boolean,
   ): Promise<{ done: true; answer: string } | { done: false; invokeFailed: boolean; emptyFind: boolean }> {
     const parsedArgs = safeParse(call.function.arguments);
+    this.opts.tracer.log(TRACE_KIND_TOOL_DISPATCH_START, { name: call.function.name });
     const result = await this.dispatch(call.function.name, parsedArgs, task, 0);
     const invokeFailed = call.function.name === META_FN.invokeTool && !result.ok;
     const emptyFind = call.function.name === META_FN.findTool && findToolReturnedNoMatches(result);
@@ -255,6 +260,7 @@ export class AgentLoop {
     const trimmedReason = stopReason.trim() || DEFAULT_SOLO_STOP_REASON;
     if (!hadPriorToolResults) return trimmedReason;
 
+    this.opts.tracer.log(TRACE_KIND_LLM_SYNTHESIS_START, {});
     const syn = await this.opts.llm.chat({
       messages: [{ role: CHAT_ROLE.system, content: FINAL_SYNTHESIS_SYSTEM }, ...messages],
       toolChoice: CHAT_TOOL_CHOICE.none,

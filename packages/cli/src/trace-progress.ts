@@ -1,8 +1,12 @@
 import {
   TRACE_KIND_EXECUTION_DENIED,
+  TRACE_KIND_FACTORY_REPAIR_LLM,
   TRACE_KIND_LLM_SYNTHESIS,
+  TRACE_KIND_LLM_SYNTHESIS_START,
   TRACE_KIND_LLM_TURN,
+  TRACE_KIND_LLM_TURN_START,
   TRACE_KIND_TOOL_CALL,
+  TRACE_KIND_TOOL_DISPATCH_START,
   TRACE_KIND_TOOL_INVOKED,
   type TraceEvent,
 } from "@meta-agent/core";
@@ -13,6 +17,20 @@ import {
  */
 export function formatTraceEvent(e: TraceEvent): string | null {
   switch (e.kind) {
+    case TRACE_KIND_LLM_TURN_START: {
+      const turn = e.data.turn as number;
+      return `[meta-agent] LLM request (turn ${turn})…`;
+    }
+    case TRACE_KIND_LLM_SYNTHESIS_START: {
+      return `[meta-agent] LLM: final answer…`;
+    }
+    case TRACE_KIND_TOOL_DISPATCH_START: {
+      const name = String(e.data.name ?? "unknown");
+      return `[meta-agent] Running "${name}"…`;
+    }
+    case TRACE_KIND_FACTORY_REPAIR_LLM: {
+      return `[meta-agent] Repairing tool draft…`;
+    }
     case TRACE_KIND_LLM_TURN: {
       const turn = e.data.turn as number;
       const usage = e.data.usage as { promptTokens?: number; completionTokens?: number } | null;
