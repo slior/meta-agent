@@ -393,7 +393,12 @@ export class AgentLoop {
     if (tool.manifest.kind === TOOL_KIND.workflow) {
       const wf = await this.opts.registry.getWorkflow(name);
       if (!wf) return toolError("unknown_tool", `workflow '${name}' not found`);
-      return this.executor.run(wf, args as Record<string, unknown>, async (toolName, toolArgs, d) => {
+      const schema = tool.manifest.inputSchema as Record<string, unknown>;
+      const input = coerceStringifiedJsonInput(args, rootJsonSchemaKind(schema));
+      if (!this.ajv.validate(schema, input)) {
+        return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
+      }
+      return this.executor.run(wf, input as Record<string, unknown>, async (toolName, toolArgs, d) => {
         return this.dispatchTool(toolName, toolArgs, task, d);
       }, depth);
     }
