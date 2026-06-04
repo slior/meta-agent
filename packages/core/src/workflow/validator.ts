@@ -37,7 +37,8 @@ function pushStepValidationError(
  *
  * This function checks:
  *   - Workflow schema version compatibility.
- *   - That inputs are empty (v1 restriction).
+ *   - Input declarations: valid names, uniqueness, no collision with step result bindings,
+ *       optional inputs have a default, schemas are objects.
  *   - Step structure, including:
  *       - Only supported step kinds are allowed (`tool_call` in v1).
  *       - Step labels are unique.
@@ -92,7 +93,8 @@ export async function validate(workflow: Workflow, registry: ToolRegistry): Prom
     if (inp.schema === null || typeof inp.schema !== "object" || Array.isArray(inp.schema)) {
       pushValidationError(errors, "invalid_input_schema", `input '${inp.name}' schema must be an object`, { pointer: `${ptr}/schema` });
     }
-    bindings.add(inp.name);
+    // Inputs are in scope from step 0 (only seed valid names to avoid polluting scope).
+    if (BINDING_NAME.test(inp.name)) bindings.add(inp.name);
   }
 
   for (let i = 0; i < workflow.steps.length; i++) {
