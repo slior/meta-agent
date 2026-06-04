@@ -27,6 +27,8 @@ export { NodePermissionSandbox } from "./sandbox/node-permission-sandbox.ts";
 export { SANDBOX_DEBUG_ENV, sandboxDebugEnabled } from "./sandbox/sandbox-debug.ts";
 export { staticValidateDraft, extractImports, extractInvokeToolCalls } from "./factory/static-validator.ts";
 export { ToolFactory } from "./factory/factory.ts";
+export type { PreviewWorkflowOutcome } from "./factory/factory.ts";
+export { parameterize, jsonSchemaTypeOf, type Promotion } from "./workflow/parameterize.ts";
 export { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./agent/meta-tools.ts";
 export type { MetaFnName } from "./agent/meta-tools.ts";
 export { renderSystemPrompt } from "./agent/system-prompt.ts";

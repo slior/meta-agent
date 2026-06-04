@@ -1,4 +1,4 @@
-import type { ToolFactory } from "@meta-agent/core";
+import type { ToolFactory, Promotion } from "@meta-agent/core";
 import type { ReadlinePromisesInterface } from "./approval-tui.ts";
 
 export type InvocationRecord = { name: string; args: unknown; ok: boolean; value?: unknown };
@@ -28,13 +28,35 @@ export async function runComposeInteraction(
   if (!name) { console.log("cancelled"); return; }
   const intent = (await rl.question("Intent (1-2 sentences): ")).trim();
   const description = (await rl.question("Description: ")).trim();
-  
-  // Use the new workflow creation path (deterministic lift, no LLM)
-  const out = await factory.createWorkflow({ 
-    slice: slice.map(s => ({ name: s.name, args: s.args, ok: s.ok, value: s.value ?? null })), 
-    name, 
-    intent, 
-    description 
-  });
+
+  const liftSlice = slice.map((s) => ({ name: s.name, args: s.args, ok: s.ok, value: s.value ?? null }));
+
+  const preview = await factory.previewWorkflow({ slice: liftSlice, name, intent, description });
+  if (!preview.ok) { console.log(`rejected: ${preview.reason}`); return; }
+
+  const promotions: Promotion[] = [];
+  if (preview.literalFallbacks.length === 0) {
+    console.log("(no literal arguments to parameterize)");
+  } else {
+    console.log("\nParameterize literal arguments (blank name = keep literal):");
+    for (const fb of preview.literalFallbacks) {
+      const preview1 = fb.canonicalValue.length > 80 ? fb.canonicalValue.slice(0, 80) + "..." : fb.canonicalValue;
+      console.log(`  ${fb.stepLabel}.${fb.argName} = ${preview1}`);
+      const paramName = (await rl.question("    Parameter name: ")).trim();
+      if (!paramName) continue;
+      const reqAns = (await rl.question("    Required? [y/N]: ")).trim().toLowerCase();
+      const required = reqAns === "y" || reqAns === "yes";
+      const desc = (await rl.question("    Description (optional): ")).trim();
+      promotions.push({
+        stepLabel: fb.stepLabel,
+        argName: fb.argName,
+        paramName,
+        required,
+        ...(desc ? { description: desc } : {}),
+      });
+    }
+  }
+
+  const out = await factory.createWorkflow({ slice: liftSlice, name, intent, description, promotions });
   console.log(out.ok ? `created workflow '${out.tool.manifest.name}'` : `rejected: ${out.reason}`);
 }
