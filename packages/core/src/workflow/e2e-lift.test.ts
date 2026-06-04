@@ -20,6 +20,7 @@ import { renderLiterate } from "./renderer.ts";
 import { toolError } from "../errors.ts";
 import type { Tool, ApprovalRecord, ToolResult } from "../types.ts";
 import { ARG_KIND } from "./types.ts";
+import { parameterize } from "./parameterize.ts";
 
 // Simple atomic tool: doubles a number
 const DOUBLE_TOOL: Tool = {
@@ -295,6 +296,50 @@ test("E2E: lift with dataflow dependencies", async () => {
       assert.equal(result.value, 19);
       console.log("✅ Dataflow works: result =", result.value);
     }
+
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("E2E: parameterized workflow runs with caller inputs and defaults", async () => {
+  const { dir, registry, tracer, sandbox } = await setupTestEnv();
+  try {
+    await registry.save(ADD_TOOL, APPROVAL);
+
+    const invocations = [{ name: "add", args: { a: 2, b: 3 }, ok: true as const, value: 5 }];
+    const lifted = liftFromTrace({ slice: invocations, name: "add-wf", description: "", goal: "", toolsByName: { add: ADD_TOOL } });
+    assert.equal(lifted.ok, true);
+    if (!lifted.ok) return;
+
+    const pr = parameterize(lifted.workflow, [
+      { stepLabel: "step_0_add", argName: "a", paramName: "a", required: true },
+      { stepLabel: "step_0_add", argName: "b", paramName: "b", required: false },
+    ]);
+    assert.equal(pr.ok, true);
+    if (!pr.ok) return;
+    const workflow = pr.workflow;
+
+    const validation = await validate(workflow, registry);
+    assert.equal(validation.ok, true, validation.ok ? "" : validation.errors.map((e) => e.code).join(","));
+
+    const executor = new WorkflowExecutor({ tracer });
+    const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
+      const tool = await registry.get(name);
+      if (!tool) return toolError("unknown_tool", name);
+      return sandbox.execute(tool, args, "token");
+    };
+
+    // Provide both inputs.
+    const r1 = await executor.run(workflow, { a: 10, b: 20 }, dispatch, 0);
+    assert.equal(r1.ok, true);
+    if (r1.ok) assert.equal(r1.value, 30);
+
+    // Omit optional b → falls back to default (3, the original literal value at lift time).
+    const r2 = await executor.run(workflow, { a: 100 }, dispatch, 0);
+    assert.equal(r2.ok, true);
+    if (r2.ok) assert.equal(r2.value, 103);
 
     await tracer.close();
   } finally {
