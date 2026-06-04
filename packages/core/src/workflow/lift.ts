@@ -237,8 +237,8 @@ export function inputSchemaFromInputs(inputs: WorkflowInput[]): Record<string, u
   for (const inp of inputs) {
     properties[inp.name] = {
       ...inp.schema,
-      ...(inp.description !== undefined ? { description: inp.description } : {}),
-      ...(inp.default !== undefined ? { default: inp.default } : {}),
+      ...("description" in inp ? { description: inp.description } : {}),
+      ...("default" in inp ? { default: inp.default } : {}),
     };
     if (inp.required) required.push(inp.name);
   }
