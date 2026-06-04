@@ -53,6 +53,18 @@ export type ToolCallStep = {
 /** v1: only `ToolCallStep`. Tier B widens to `ToolCallStep | BranchStep`. */
 export type Step = ToolCallStep;
 
+/**
+ * A declared workflow parameter. In scope as a binding from step 0, so a
+ * `SymRef` may target its `name`. Created by promoting a lifted literal.
+ */
+export type WorkflowInput = {
+  name: string;                     // matches /^[a-z_][a-z0-9_]*$/i; unique; no collision with a resultBinding
+  schema: Record<string, unknown>;  // inferred JSON Schema fragment, e.g. { type: "string" }
+  required: boolean;
+  default?: unknown;                // present iff required === false (the original literal value)
+  description?: string;
+};
+
 export type WorkflowReturn = { source: SymRef } | null;
 
 export type Workflow = {
@@ -60,8 +72,8 @@ export type Workflow = {
   name: string;
   description: string;
   goal: string;
-  /** v1 MUST be `[]`. Tier B / COMPOSE widens. */
-  inputs: string[];
+  /** Declared parameters; `[]` for a closed (non-parameterized) workflow. */
+  inputs: WorkflowInput[];
   steps: Step[];
   return: WorkflowReturn;
 };

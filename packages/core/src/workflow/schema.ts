@@ -68,6 +68,19 @@ export const WORKFLOW_RETURN_SCHEMA = {
   ],
 } as const;
 
+export const WORKFLOW_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string", minLength: 1 },
+    schema: { type: "object" },
+    required: { type: "boolean" },
+    default: {},
+    description: { type: "string" },
+  },
+  required: ["name", "schema", "required"],
+  additionalProperties: false,
+} as const;
+
 export const WORKFLOW_SCHEMA = {
   type: "object",
   properties: {
@@ -75,7 +88,7 @@ export const WORKFLOW_SCHEMA = {
     name: { type: "string", minLength: 1 },
     description: { type: "string" },
     goal: { type: "string" },
-    inputs: { type: "array", items: { type: "string", minLength: 1 } },
+    inputs: { type: "array", items: WORKFLOW_INPUT_SCHEMA },
     steps: { type: "array", items: TOOL_CALL_STEP_SCHEMA, minItems: 1 },
     return: WORKFLOW_RETURN_SCHEMA,
   },

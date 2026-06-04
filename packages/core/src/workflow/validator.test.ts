@@ -95,7 +95,7 @@ test("validator: rejects unsupported_schema_version", async () => {
 });
 
 test("validator: rejects non-empty inputs in v1", async () => {
-  const wf = { ...baseWorkflow(), inputs: ["x"] };
+  const wf = { ...baseWorkflow(), inputs: [{ name: "x", schema: { type: "string" }, required: true }] };
   const out = await validate(wf, fakeRegistry({ "fetch-mail": FETCH, "summarize-list": SUMMARIZE }));
   assert.equal(out.ok, false);
   if (!out.ok) assert.ok(out.errors.some((e) => e.code === "inputs_not_supported_in_v1"));
