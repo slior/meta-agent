@@ -462,6 +462,77 @@ test("agent: workflow inputSchema — valid input dispatches to executor success
   }
 });
 
+const CLOSED_WF_HASH = "sha256:" + "c".repeat(64);
+
+const CLOSED_WF_TOOL: Tool = {
+  manifest: {
+    name: "closed-workflow",
+    description: "Test workflow with no declared parameters",
+    rationale: "test closed workflow",
+    inputSchema: {},
+    outputShape: { type: "number" },
+    permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+    dependencies: ["double"],
+    limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
+    hash: CLOSED_WF_HASH,
+    createdAt: "2026-01-01T00:00:00Z",
+    kind: "workflow",
+  },
+  code: JSON.stringify({
+    schemaVersion: 1,
+    name: "closed-workflow",
+    description: "Test closed workflow",
+    goal: "test",
+    inputs: [],
+    steps: [
+      {
+        kind: "tool_call",
+        label: "step1",
+        tool: "double",
+        arguments: { n: { kind: "literal", value: 3 } },
+        resultBinding: "result",
+      },
+    ],
+    return: { source: { kind: "symref", ref: "result" } },
+  }),
+};
+
+const CLOSED_WF_APPROVAL: ApprovalRecord = {
+  hash: CLOSED_WF_HASH,
+  approvedAt: "2026-01-01T00:00:00Z",
+  approvedBy: "test",
+  alwaysApprove: false,
+};
+
+test("agent: workflow inputSchema — closed workflow (inputSchema: {}) accepts any input", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
+    await registry.save(CLOSED_WF_TOOL, CLOSED_WF_APPROVAL);
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "closed-workflow", args: { url: "https://x" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    await loop.run("run the closed workflow with extra args");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const toolMsg = secondReq.messages.find((m) => m.role === CHAT_ROLE.tool);
+    assert.ok(toolMsg, "expected a tool message in the second chat call");
+    const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
+    assert.equal(parsed.ok, true, `expected ok:true but got: ${JSON.stringify(parsed)}`);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("agent: propose_new_tool requires find_tool first", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-"));
   try {
