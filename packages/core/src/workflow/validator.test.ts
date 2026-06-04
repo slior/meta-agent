@@ -247,3 +247,14 @@ test("validator: invalid_input_schema", async () => {
   assert.equal(res.ok, false);
   if (!res.ok) assert.ok(res.errors.some((e) => e.code === "invalid_input_schema"));
 });
+
+test("validator: symref to invalid input name emits both invalid_input_name and unbound_symref", async () => {
+  const wf = paramWf({ name: "1bad", schema: { type: "string" }, required: true });
+  wf.steps[0]!.arguments = { x: { kind: "symref", ref: "1bad" } as const };
+  const res = await validate(wf, registry);
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === "invalid_input_name"));
+    assert.ok(res.errors.some((e) => e.code === "unbound_symref"));
+  }
+});

@@ -94,7 +94,9 @@ export async function validate(workflow: Workflow, registry: ToolRegistry): Prom
       pushValidationError(errors, "invalid_input_schema", `input '${inp.name}' schema must be an object`, { pointer: `${ptr}/schema` });
     }
     // Inputs are in scope from step 0 (only seed valid names to avoid polluting scope).
-    if (BINDING_NAME.test(inp.name)) bindings.add(inp.name);
+    // Exclude names that collide with a resultBinding — those already generate `input_binding_collision`
+    // and must not enter `bindings`, which would produce a spurious `duplicate_binding` from the step loop.
+    if (BINDING_NAME.test(inp.name) && !resultBindings.has(inp.name)) bindings.add(inp.name);
   }
 
   for (let i = 0; i < workflow.steps.length; i++) {
