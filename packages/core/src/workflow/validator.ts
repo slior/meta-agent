@@ -64,12 +64,36 @@ export async function validate(workflow: Workflow, registry: ToolRegistry): Prom
     });
   }
 
-  if (workflow.inputs.length !== 0) {
-    pushValidationError(errors, "inputs_not_supported_in_v1", "workflow.inputs must be [] in v1; tier B / COMPOSE will widen", { pointer: "/inputs", });
-  }
-
   const seenLabels = new Set<string>();
   const bindings = new Set<string>();
+
+  const resultBindings = new Set<string>();
+  for (const s of workflow.steps) {
+    if (s.kind === STEP_KIND.tool_call && s.resultBinding !== null) resultBindings.add(s.resultBinding);
+  }
+
+  const seenInputs = new Set<string>();
+  for (let i = 0; i < workflow.inputs.length; i++) {
+    const inp = workflow.inputs[i]!;
+    const ptr = `/inputs/${i}`;
+    if (!BINDING_NAME.test(inp.name)) {
+      pushValidationError(errors, "invalid_input_name", `input name '${inp.name}' must match /^[a-z_][a-z0-9_]*$/i`, { pointer: `${ptr}/name` });
+    }
+    if (seenInputs.has(inp.name)) {
+      pushValidationError(errors, "duplicate_input", `input '${inp.name}' is declared more than once`, { pointer: `${ptr}/name` });
+    }
+    seenInputs.add(inp.name);
+    if (resultBindings.has(inp.name)) {
+      pushValidationError(errors, "input_binding_collision", `input '${inp.name}' collides with a step resultBinding`, { pointer: `${ptr}/name` });
+    }
+    if (inp.required === false && !("default" in inp)) {
+      pushValidationError(errors, "optional_input_missing_default", `optional input '${inp.name}' must declare a default`, { pointer: ptr });
+    }
+    if (inp.schema === null || typeof inp.schema !== "object" || Array.isArray(inp.schema)) {
+      pushValidationError(errors, "invalid_input_schema", `input '${inp.name}' schema must be an object`, { pointer: `${ptr}/schema` });
+    }
+    bindings.add(inp.name);
+  }
 
   for (let i = 0; i < workflow.steps.length; i++) {
     const step = workflow.steps[i]!;

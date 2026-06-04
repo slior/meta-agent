@@ -53,6 +53,25 @@ const SUMMARIZE = ATOMIC("summarize-list", {
   required: ["items"],
   additionalProperties: false,
 });
+const FETCH_WEBPAGE = ATOMIC("fetch-webpage-text", {});
+
+const registry = fakeRegistry({
+  "fetch-mail": FETCH,
+  "summarize-list": SUMMARIZE,
+  "fetch-webpage-text": FETCH_WEBPAGE,
+});
+
+function paramWf(...inputs: Workflow["inputs"]): Workflow {
+  return {
+    schemaVersion: 1, name: "p", description: "", goal: "",
+    inputs,
+    steps: [{
+      kind: "tool_call", label: "s0", tool: "fetch-webpage-text",
+      arguments: {}, resultBinding: "r0",
+    }],
+    return: null,
+  };
+}
 
 function baseWorkflow(): Workflow {
   return {
@@ -94,12 +113,6 @@ test("validator: rejects unsupported_schema_version", async () => {
   if (!out.ok) assert.ok(out.errors.some((e) => e.code === "unsupported_schema_version"));
 });
 
-test("validator: rejects non-empty inputs in v1", async () => {
-  const wf = { ...baseWorkflow(), inputs: [{ name: "x", schema: { type: "string" }, required: true }] };
-  const out = await validate(wf, fakeRegistry({ "fetch-mail": FETCH, "summarize-list": SUMMARIZE }));
-  assert.equal(out.ok, false);
-  if (!out.ok) assert.ok(out.errors.some((e) => e.code === "inputs_not_supported_in_v1"));
-});
 
 test("validator: rejects duplicate step labels", async () => {
   const wf = baseWorkflow();
@@ -181,4 +194,56 @@ test("validator: accepts null return", async () => {
   wf.return = null;
   const out = await validate(wf, fakeRegistry({ "fetch-mail": FETCH, "summarize-list": SUMMARIZE }));
   assert.equal(out.ok, true);
+});
+
+test("validator: input SymRef resolves in scope; parameterized workflow is valid", async () => {
+  const wf: Workflow = {
+    schemaVersion: 1, name: "p", description: "", goal: "",
+    inputs: [{ name: "url", schema: { type: "string" }, required: true }],
+    steps: [{
+      kind: "tool_call", label: "s0", tool: "fetch-webpage-text",
+      arguments: { url: { kind: "symref", ref: "url" } }, resultBinding: "r0",
+    }],
+    return: { source: { kind: "symref", ref: "r0" } },
+  };
+  const res = await validate(wf, registry);
+  assert.equal(res.ok, true, res.ok ? "" : res.errors.map((e) => e.code).join(","));
+});
+
+test("validator: invalid_input_name", async () => {
+  const wf = paramWf({ name: "1bad", schema: { type: "string" }, required: true });
+  const res = await validate(wf, registry);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.ok(res.errors.some((e) => e.code === "invalid_input_name"));
+});
+
+test("validator: duplicate_input", async () => {
+  const wf = paramWf(
+    { name: "x", schema: { type: "string" }, required: true },
+    { name: "x", schema: { type: "string" }, required: true },
+  );
+  const res = await validate(wf, registry);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.ok(res.errors.some((e) => e.code === "duplicate_input"));
+});
+
+test("validator: input_binding_collision", async () => {
+  const wf = paramWf({ name: "r0", schema: { type: "string" }, required: true });
+  const res = await validate(wf, registry);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.ok(res.errors.some((e) => e.code === "input_binding_collision"));
+});
+
+test("validator: optional_input_missing_default", async () => {
+  const wf = paramWf({ name: "x", schema: { type: "string" }, required: false });
+  const res = await validate(wf, registry);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.ok(res.errors.some((e) => e.code === "optional_input_missing_default"));
+});
+
+test("validator: invalid_input_schema", async () => {
+  const wf = paramWf({ name: "x", schema: null as unknown as Record<string, unknown>, required: true });
+  const res = await validate(wf, registry);
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.ok(res.errors.some((e) => e.code === "invalid_input_schema"));
 });
