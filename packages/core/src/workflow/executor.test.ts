@@ -130,14 +130,63 @@ test("executor: runtime defense for unbound symref", async () => {
   }
 });
 
-test("executor: rejects non-empty runtime inputs in v1", async () => {
+test("executor: seeds required input from runtimeInputs", async () => {
   const { tracer, dir } = await makeTracer();
   try {
+    const wf: Workflow = {
+      schemaVersion: 1, name: "p", description: "", goal: "",
+      inputs: [{ name: "url", schema: { type: "string" }, required: true }],
+      steps: [{ kind: "tool_call", label: "s0", tool: "echo",
+        arguments: { url: { kind: "symref", ref: "url" } }, resultBinding: "r0" }],
+      return: { source: { kind: "symref", ref: "r0" } },
+    };
+    const dispatch = async (_n: string, args: unknown): Promise<ToolResult> => ({ ok: true, value: args });
+    const exec = new WorkflowExecutor({ tracer });
+    const res = await exec.run(wf, { url: "https://a" }, dispatch, 0);
+    assert.equal(res.ok, true);
+    if (res.ok) assert.deepEqual(res.value, { url: "https://a" });
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executor: optional input falls back to default when omitted", async () => {
+  const { tracer, dir } = await makeTracer();
+  try {
+    const wf: Workflow = {
+      schemaVersion: 1, name: "p", description: "", goal: "",
+      inputs: [{ name: "path", schema: { type: "string" }, required: false, default: "./d.md" }],
+      steps: [{ kind: "tool_call", label: "s0", tool: "echo",
+        arguments: { path: { kind: "symref", ref: "path" } }, resultBinding: "r0" }],
+      return: { source: { kind: "symref", ref: "r0" } },
+    };
+    const dispatch = async (_n: string, args: unknown): Promise<ToolResult> => ({ ok: true, value: args });
+    const exec = new WorkflowExecutor({ tracer });
+    const res = await exec.run(wf, {}, dispatch, 0);
+    assert.equal(res.ok, true);
+    if (res.ok) assert.deepEqual(res.value, { path: "./d.md" });
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executor: missing required input fails", async () => {
+  const { tracer, dir } = await makeTracer();
+  try {
+    const wf: Workflow = {
+      schemaVersion: 1, name: "p", description: "", goal: "",
+      inputs: [{ name: "url", schema: { type: "string" }, required: true }],
+      steps: [{ kind: "tool_call", label: "s0", tool: "echo",
+        arguments: { url: { kind: "symref", ref: "url" } }, resultBinding: "r0" }],
+      return: null,
+    };
     const dispatch = async (): Promise<ToolResult> => ({ ok: true, value: null });
     const exec = new WorkflowExecutor({ tracer });
-    const out = await exec.run(TWO_STEP, { foo: 1 }, dispatch, 0);
-    assert.equal(out.ok, false);
-    if (!out.ok) assert.equal(out.error.kind, "schema_violation");
+    const res = await exec.run(wf, {}, dispatch, 0);
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal((res.error.details as { code?: string }).code, "missing_required_input");
     await tracer.close();
   } finally {
     await rm(dir, { recursive: true, force: true });

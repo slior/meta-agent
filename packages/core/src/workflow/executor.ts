@@ -38,7 +38,7 @@ export type WorkflowExecutorOpts = { tracer: Tracer };
  *   - Instantiate with workflow execution options (e.g., tracer).
  *   - Call the `run` method with:
  *       - the workflow definition,
- *       - runtime inputs (required to be empty for v1 workflows),
+ *       - runtime inputs (values for declared workflow inputs),
  *       - a function to dispatch tool calls,
  *       - the current recursion depth.
  *
@@ -46,7 +46,7 @@ export type WorkflowExecutorOpts = { tracer: Tracer };
  *   - Emits start, step, and end trace events via the provided tracer for observability.
  *
  * Error Handling:
- *   - Prevents execution if runtime inputs are provided to a v1 workflow.
+ *   - Fails fast if a required input is missing from runtimeInputs.
  *   - Returns failure if arguments to steps are unbound or any underlying tool fails.
  *
  * Environment/Caching:
@@ -62,25 +62,30 @@ export class WorkflowExecutor {
    * Runs a workflow to completion by executing each step in sequence.
    *
    * @param workflow - The workflow definition to execute.
-   * @param runtimeInputs - Input values for workflow parameters (must be empty for v1 workflows).
+   * @param runtimeInputs - Input values for declared workflow parameters.
    * @param dispatchTool - Function to invoke each tool required by workflow steps.
    * @param depth - The current tool-call nesting or recursion depth.
    *
    * @returns A Promise that resolves to the workflow's final ToolResult.
    */
   async run(workflow: Workflow, runtimeInputs: Record<string, unknown>, dispatchTool: DispatchTool, depth: number): Promise<ToolResult> {
-    if (Object.keys(runtimeInputs).length !== 0) {
-      return {
-        ok: false,
-        error: {
-          kind: "schema_violation",
-          message: "v1 workflows do not accept runtime inputs",
-          details: { code: "inputs_not_supported_in_v1" },
-        },
-      };
-    }
-
     const env = new Map<string, unknown>();
+    for (const input of workflow.inputs) {
+      if (Object.prototype.hasOwnProperty.call(runtimeInputs, input.name)) {
+        env.set(input.name, runtimeInputs[input.name]);
+      } else if (input.required === false) {
+        env.set(input.name, input.default);
+      } else {
+        return {
+          ok: false,
+          error: {
+            kind: "schema_violation",
+            message: `missing required input '${input.name}'`,
+            details: { code: "missing_required_input", workflow: workflow.name, input: input.name },
+          },
+        };
+      }
+    }
     const startedAt = Date.now();
     this.opts.tracer.log(TRACE_KIND_WORKFLOW_START, { name: workflow.name, depth });
 
