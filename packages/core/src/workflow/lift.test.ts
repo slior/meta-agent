@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { liftFromTrace } from "./lift.ts";
+import { liftFromTrace, inputSchemaFromInputs } from "./lift.ts";
 import { validate } from "./validator.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { Tool, ToolSummary } from "../types.ts";
@@ -194,4 +194,24 @@ test("lift: surfaces literal-fallback list for sub-value args", () => {
   assert.equal(out.literalFallbacks.length, 2);
   assert.equal(out.literalFallbacks[0]!.argName, "path");
   assert.equal(out.literalFallbacks[1]!.argName, "firstRow");
+});
+
+test("inputSchemaFromInputs: empty inputs project to {}", () => {
+  assert.deepEqual(inputSchemaFromInputs([]), {});
+});
+
+test("inputSchemaFromInputs: required, defaults, and descriptions project correctly", () => {
+  const schema = inputSchemaFromInputs([
+    { name: "path", schema: { type: "string" }, required: true },
+    { name: "url", schema: { type: "string" }, required: false, default: "https://x", description: "the url" },
+  ]);
+  assert.deepEqual(schema, {
+    type: "object",
+    properties: {
+      path: { type: "string" },
+      url: { type: "string", description: "the url", default: "https://x" },
+    },
+    required: ["path"],
+    additionalProperties: false,
+  });
 });

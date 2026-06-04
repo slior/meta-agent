@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "../hash.ts";
 import { normalizePermissions } from "../permissions-normalize.ts";
 import { TOOL_KIND, type Tool, type ToolManifest, type Permissions } from "../types.ts";
-import { IR_SCHEMA_VERSION, STEP_KIND, ARG_KIND, type Argument, type ToolCallStep, type Workflow } from "./types.ts";
+import { IR_SCHEMA_VERSION, STEP_KIND, ARG_KIND, type Argument, type ToolCallStep, type Workflow, type WorkflowInput } from "./types.ts";
 
 /**
  * Represents a single tool invocation within a trace slice, as used by the workflow lifting process.
@@ -223,4 +223,29 @@ function unionStrings(a: string[], b: string[]): string[] {
 
 function simpleHash(s: string): string {
   return createHash("sha256").update(s).digest("hex");
+}
+
+/**
+ * Projects declared workflow inputs into a JSON Schema for the manifest's
+ * `inputSchema`. Empty inputs project to `{}` (a closed workflow). Defaults and
+ * descriptions are advertised for the LLM; defaults are applied by the executor.
+ */
+export function inputSchemaFromInputs(inputs: WorkflowInput[]): Record<string, unknown> {
+  if (inputs.length === 0) return {};
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const inp of inputs) {
+    properties[inp.name] = {
+      ...inp.schema,
+      ...(inp.description !== undefined ? { description: inp.description } : {}),
+      ...(inp.default !== undefined ? { default: inp.default } : {}),
+    };
+    if (inp.required) required.push(inp.name);
+  }
+  return {
+    type: "object",
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+    additionalProperties: false,
+  };
 }
