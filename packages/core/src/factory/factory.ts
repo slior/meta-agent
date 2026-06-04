@@ -8,9 +8,11 @@ import { normalizePermissions } from "../permissions-normalize.ts";
 import { staticValidateDraft, type ValidationResult } from "./static-validator.ts";
 import { atomicPrompt, compositePrompt, repairPrompt, DRAFT_SCHEMA } from "./code-gen-prompts.ts";
 import { TRACE_KIND_FACTORY_REPAIR_LLM, type Tracer } from "../tracer.ts";
-import { liftFromTrace, type Invocation, type LiftResult } from "../workflow/lift.ts";
+import { liftFromTrace, inputSchemaFromInputs, type Invocation, type LiftResult, type LiteralFallback } from "../workflow/lift.ts";
+import { parameterize, type Promotion } from "../workflow/parameterize.ts";
 import { validate as validateWorkflow } from "../workflow/validator.ts";
 import { renderLiterate } from "../workflow/renderer.ts";
+import type { Workflow } from "../workflow/types.ts";
 
 export type CreateAtomicReq = {
   intent: string;
@@ -29,7 +31,12 @@ export type CreateWorkflowReq = {
   name: string;
   intent: string;
   description: string;
+  promotions?: Promotion[];
 };
+
+export type PreviewWorkflowOutcome =
+  | { ok: true; workflow: Workflow; literalFallbacks: LiteralFallback[] }
+  | { ok: false; reason: string };
 
 export type FactoryOpts = {
   llm: LLMProvider;
@@ -102,43 +109,67 @@ export class ToolFactory {
   }
 
   /**
-   * Creates a workflow tool by deterministically lifting a workflow from a slice of successful tool invocations (trace).
-   *
-   * This method performs a structural lift from invocation history to a workflow IR (intermediate representation).
-   * The workflow is built using only existing, registered tools (no LLM codegeneration).
-   * After lifting, the workflow is validated for correctness.
-   * The workflow code and manifest are combined, reviewed by showing a literate rendering and any literal fallbacks,
-   * and finally saved to the registry, with immediate approval (bypassing UI).
-   *
-   * No smoke-testing is performed since workflow execution is deterministic over validated steps.
-   *
-   * @param req - The workflow creation request. It includes a trace slice (set of invocations), desired name,
-   *              a user intent, and a human-friendly description.
-   * @returns A FactoryOutcome, which is { ok: true, tool, approval } on success,
-   *          or { ok: false, reason } if the lift or validation failed.
+   * Lifts a workflow from the request's slice using registered tools, returning the LiftResult.
+   * Extracted to share between createWorkflow and previewWorkflow.
    */
-  async createWorkflow(req: CreateWorkflowReq): Promise<FactoryOutcome> {
-    // Build toolsByName from registry
+  private async liftSlice(req: CreateWorkflowReq): Promise<LiftResult> {
     const toolsByName: Record<string, Tool> = {};
     for (const summary of this.opts.registry.listSync()) {
       const tool = await this.opts.registry.get(summary.name);
       if (tool) toolsByName[summary.name] = tool;
     }
-
-    // Lift from trace (deterministic, no LLM)
-    const liftResult = liftFromTrace({
+    return liftFromTrace({
       slice: req.slice,
       name: req.name,
       description: req.description,
       goal: req.intent,
       toolsByName,
     });
+  }
 
+  /**
+   * Previews a workflow lift without persisting anything to the registry.
+   * Returns the workflow IR and literal fallbacks for inspection.
+   *
+   * @param req - The workflow creation request (same shape as createWorkflow, promotions ignored).
+   * @returns The lifted workflow and literal fallbacks, or an error reason.
+   */
+  async previewWorkflow(req: CreateWorkflowReq): Promise<PreviewWorkflowOutcome> {
+    const liftResult = await this.liftSlice(req);
+    if (!liftResult.ok) return { ok: false, reason: `lift failed: ${liftResult.errors.map((e) => e.message).join("; ")}` };
+    return { ok: true, workflow: liftResult.workflow, literalFallbacks: liftResult.literalFallbacks };
+  }
+
+  /**
+   * Creates a workflow tool by deterministically lifting a workflow from a slice of successful tool invocations (trace).
+   *
+   * This method performs a structural lift from invocation history to a workflow IR (intermediate representation).
+   * The workflow is built using only existing, registered tools (no LLM codegeneration).
+   * After lifting, optional promotions are applied to convert literals into named workflow inputs,
+   * and the inputSchema is re-derived from the resulting workflow inputs.
+   * The workflow is then validated, saved to the registry, and returned.
+   *
+   * No smoke-testing is performed since workflow execution is deterministic over validated steps.
+   *
+   * @param req - The workflow creation request. It includes a trace slice (set of invocations), desired name,
+   *              a user intent, a human-friendly description, and optional promotions.
+   * @returns A FactoryOutcome, which is { ok: true, tool, approval } on success,
+   *          or { ok: false, reason } if the lift, parameterization, or validation failed.
+   */
+  async createWorkflow(req: CreateWorkflowReq): Promise<FactoryOutcome> {
+    const liftResult = await this.liftSlice(req);
     if (!liftResult.ok) {
       return { ok: false, reason: `lift failed: ${liftResult.errors.map((e) => e.message).join("; ")}` };
     }
 
-    const { workflow, manifest, literalFallbacks } = liftResult;
+    let { workflow, manifest, literalFallbacks } = liftResult;
+
+    if (req.promotions && req.promotions.length > 0) {
+      const pr = parameterize(workflow, req.promotions);
+      if (!pr.ok) return { ok: false, reason: `parameterize failed: ${pr.errors.map((e) => e.message).join("; ")}` };
+      workflow = pr.workflow;
+      manifest = { ...manifest, inputSchema: inputSchemaFromInputs(workflow.inputs) };
+    }
 
     // Validate the lifted workflow
     const validation = await validateWorkflow(workflow, this.opts.registry);
@@ -150,8 +181,6 @@ export class ToolFactory {
     const { hash: _liftHash, ...manifestSansHash } = manifest;
     const tool = this.toolFromManifestAndCode(manifestSansHash, workflowJson);
 
-    // For workflow tools, we don't smoke-test since execution is deterministic IR
-    // Just show the literate render (the "present" step)
     console.log("\n--- Lifted Workflow ---");
     console.log(renderLiterate(workflow));
     console.log("\n--- Literal Fallbacks ---");
@@ -164,7 +193,6 @@ export class ToolFactory {
     }
     console.log("");
 
-    // Create approval record (bypassing normal approval UI for now - approval happens via presentAndSave pattern)
     const approval: ApprovalRecord = {
       hash: tool.manifest.hash,
       approvedAt: new Date().toISOString(),
