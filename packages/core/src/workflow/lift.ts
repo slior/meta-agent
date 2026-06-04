@@ -72,7 +72,8 @@ export type LiftResult =
     }
   | { ok: false; errors: LiftError[] };
 
-const SAFE_NAME = /[^a-z0-9_-]/gi;
+/** Tool names may be kebab-case; bindings must match validator `BINDING_NAME` (no hyphens). */
+const SAFE_NAME = /[^a-z0-9_]/gi;
 
 function sanitize(name: string): string {
   return name.replace(SAFE_NAME, "_").toLowerCase();

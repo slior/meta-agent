@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { liftFromTrace } from "./lift.ts";
-import type { Tool } from "../types.ts";
+import { validate } from "./validator.ts";
+import type { ToolRegistry } from "../registry/tool-registry.ts";
+import type { Tool, ToolSummary } from "../types.ts";
 
 const FETCH: Tool = {
   manifest: {
@@ -129,6 +131,55 @@ test("lift: rejects unknown tool in slice", () => {
   const out = liftFromTrace({ slice, name: "x", description: "", goal: "", toolsByName: TOOLS });
   assert.equal(out.ok, false);
   if (!out.ok) assert.equal(out.errors[0]!.code, "unknown_tool");
+});
+
+test("lift: kebab-case tool names produce validator-safe bindings (compose regression)", async () => {
+  const fetchWebpage = { ...FETCH, manifest: { ...FETCH.manifest, name: "fetch-webpage-text" } };
+  const writeFile = { ...FETCH, manifest: { ...FETCH.manifest, name: "write-file-text" } };
+  const tools: Record<string, Tool> = {
+    "fetch-webpage-text": fetchWebpage,
+    "write-file-text": writeFile,
+  };
+  const slice = [
+    { name: "fetch-webpage-text", args: { url: "https://example.com" }, ok: true as const, value: "page text" },
+    { name: "write-file-text", args: { path: "/tmp/out.txt", content: "page text" }, ok: true as const, value: { written: true } },
+  ];
+  const out = liftFromTrace({
+    slice,
+    name: "fetch-and-write",
+    description: "",
+    goal: "",
+    toolsByName: tools,
+  });
+  assert.equal(out.ok, true);
+  if (!out.ok) return;
+
+  assert.equal(out.workflow.steps[0]!.resultBinding, "r_0_fetch_webpage_text");
+  assert.equal(out.workflow.steps[1]!.resultBinding, "r_1_write_file_text");
+  assert.deepEqual(out.workflow.return, {
+    source: { kind: "symref", ref: "r_1_write_file_text" },
+  });
+
+  const summaries: ToolSummary[] = Object.values(tools).map((t) => ({
+    name: t.manifest.name,
+    description: t.manifest.description,
+    hash: t.manifest.hash,
+    kind: t.manifest.kind,
+  }));
+  const registry: ToolRegistry = {
+    list: async () => summaries,
+    listSync: () => summaries,
+    has: async (n) => n in tools,
+    get: async (n) => tools[n] ?? null,
+    getApproval: async () => null,
+    save: async () => {},
+    delete: async () => {},
+    getDependents: async () => [],
+    rootDir: () => "/tmp",
+    getWorkflow: async () => null,
+  };
+  const validation = await validate(out.workflow, registry);
+  assert.equal(validation.ok, true, !validation.ok ? validation.errors.map((e) => e.message).join("; ") : "");
 });
 
 test("lift: surfaces literal-fallback list for sub-value args", () => {
