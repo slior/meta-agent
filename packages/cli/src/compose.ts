@@ -1,7 +1,7 @@
 import type { ToolFactory } from "@meta-agent/core";
 import type { ReadlinePromisesInterface } from "./approval-tui.ts";
 
-export type InvocationRecord = { name: string; args: unknown; ok: boolean };
+export type InvocationRecord = { name: string; args: unknown; ok: boolean; value?: unknown };
 
 export async function runComposeInteraction(
   factory: ToolFactory,
@@ -14,7 +14,8 @@ export async function runComposeInteraction(
   }
   console.log("\nTool calls in this session:");
   invocations.forEach((inv, i) => {
-    console.log(`  [${i + 1}] ${inv.name}(${JSON.stringify(inv.args)}) → ${inv.ok ? "ok" : "err"}`);
+    const valueStr = inv.ok && inv.value !== undefined ? `→ ${JSON.stringify(inv.value).slice(0, 60)}` : "";
+    console.log(`  [${i + 1}] ${inv.name}(${JSON.stringify(inv.args)}) ${inv.ok ? "ok" : "err"} ${valueStr}`);
   });
   const range = (await rl.question("Select a contiguous slice as 'a-b' (or blank to cancel): ")).trim();
   if (!range) return;
@@ -23,10 +24,17 @@ export async function runComposeInteraction(
   const a = parseInt(m[1]!, 10), b = parseInt(m[2]!, 10);
   if (a < 1 || b > invocations.length || a > b) { console.log("out of bounds"); return; }
   const slice = invocations.slice(a - 1, b);
-  const name = (await rl.question("Name for the new composite: ")).trim();
+  const name = (await rl.question("Name for the new workflow: ")).trim();
   if (!name) { console.log("cancelled"); return; }
   const intent = (await rl.question("Intent (1-2 sentences): ")).trim();
-  const sliceDescription = slice.map((s, i) => `${i + 1}. ${s.name}(${JSON.stringify(s.args)})`).join("\n");
-  const out = await factory.createReactive({ name, intent, sliceDescription });
-  console.log(out.ok ? `created composite '${out.tool.manifest.name}'` : `rejected: ${out.reason}`);
+  const description = (await rl.question("Description: ")).trim();
+  
+  // Use the new workflow creation path (deterministic lift, no LLM)
+  const out = await factory.createWorkflow({ 
+    slice: slice.map(s => ({ name: s.name, args: s.args, ok: s.ok, value: s.value ?? null })), 
+    name, 
+    intent, 
+    description 
+  });
+  console.log(out.ok ? `created workflow '${out.tool.manifest.name}'` : `rejected: ${out.reason}`);
 }

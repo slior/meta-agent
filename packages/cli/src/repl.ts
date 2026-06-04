@@ -55,7 +55,7 @@ export async function runRepl(config: Config): Promise<void> {
   const agent = new AgentLoop({
     llm, registry, index, sandbox, approval, factory, tracer,
     maxTurns: config.maxTurns,
-    onToolInvoked: (ev) => invocations.push({ name: ev.name, args: ev.args, ok: ev.ok }),
+    onToolInvoked: (ev) => invocations.push({ name: ev.name, args: ev.args, ok: ev.ok, value: ev.value }),
   });
 
   console.log("meta-agent REPL. Commands: /compose, /tools, /exit. Any other line = task for the agent.\n");

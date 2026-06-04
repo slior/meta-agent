@@ -23,6 +23,7 @@ export type Limits = {
 export const TOOL_KIND = {
   atomic: "atomic",
   composite: "composite",
+  workflow: "workflow",
 } as const;
 
 export type ToolKind = (typeof TOOL_KIND)[keyof typeof TOOL_KIND];
@@ -39,6 +40,12 @@ export type ToolManifest = {
   hash: string;
   createdAt: string;
   kind: ToolKind;
+  // Reserved for VERIFY spec (all optional, ignored in v1):
+  sourceLabels?: string[];        // taint labels this tool produces
+  sinkParams?: string[];          // parameter names that are taint sinks
+  preconditions?: string[];       // Z3-translatable expressions
+  postconditions?: string[];
+  frameConditions?: string[];
 };
 
 export type Tool = {

@@ -10,9 +10,9 @@ import {
   type ToolDef,
 } from "../llm/interface.ts";
 import type { Sandbox } from "../sandbox/interface.ts";
-import type { ToolRegistry } from "../registry/interface.ts";
+import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
-import type { ToolResult } from "../types.ts";
+import { TOOL_KIND, type ToolResult } from "../types.ts";
 import {
   TRACE_KIND_EXECUTION_DENIED,
   TRACE_KIND_LLM_SYNTHESIS,
@@ -29,6 +29,7 @@ import { renderSystemPrompt } from "./system-prompt.ts";
 import { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./meta-tools.ts";
 import { ToolFactory } from "../factory/factory.ts";
 import { toolError } from "../errors.ts";
+import { WorkflowExecutor } from "../workflow/executor.ts";
 
 /** Default maximum LLM turns when {@link AgentLoopOpts.maxTurns} is omitted. */
 const DEFAULT_MAX_TURNS = 20;
@@ -54,7 +55,7 @@ export const EMPTY_FIND_RECOVERY_USER =
   `That means no registry tool matched — it is not an error. Next use ${META_FN.proposeNewTool} or ${META_FN.proposeCompositeTool}, or ${META_FN.listTools} if you need the full catalog; you may try ${META_FN.findTool} again with a sharper query. ` +
   "Do not answer with only prose unless you have genuinely exhausted these options.";
 
-export type ToolInvokedEvent = { name: string; args: unknown; ok: boolean; durationMs: number };
+export type ToolInvokedEvent = { name: string; args: unknown; ok: boolean; durationMs: number; value?: unknown };
 
 /**
  * Options for constructing an {@link AgentLoop}.
@@ -116,6 +117,8 @@ export class AgentLoop {
   private readonly maxTurns: number;
   /** Relaxed-constraint Ajv instance for validating tool input schemas. */
   private readonly ajv = new Ajv({ strict: false });
+  /** In-process executor for workflow-kind tools. */
+  private readonly executor: WorkflowExecutor;
 
   /**
    * Constructs an AgentLoop, binding its dependencies and policies.
@@ -124,6 +127,7 @@ export class AgentLoop {
   constructor(opts: AgentLoopOpts) {
     this.opts = opts;
     this.maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
+    this.executor = new WorkflowExecutor({ tracer: opts.tracer });
   }
 
   /**
@@ -372,8 +376,8 @@ export class AgentLoop {
   }
 
   /**
-   * Handles invocation of a non-meta-tool ("user" or composite tools).
-   * Validates input, requests approval, invokes the tool in sandbox, and records invocation/trace.
+   * Handles invocation of a non-meta-tool ("user", composite, or workflow tools).
+   * Validates input, requests approval, invokes the tool in sandbox (or executor for workflows), and records invocation/trace.
    * Updates state for allowed tool invocations.
    * @param name The name of the tool to invoke.
    * @param args Tool input arguments (parsed).
@@ -384,6 +388,15 @@ export class AgentLoop {
   private async dispatchTool(name: string, args: unknown, task: Task, depth: number): Promise<ToolResult> {
     const tool = await this.opts.registry.get(name);
     if (!tool) return toolError("unknown_tool", `no tool named '${name}'`);
+
+    // Workflow tools run in-process via WorkflowExecutor
+    if (tool.manifest.kind === TOOL_KIND.workflow) {
+      const wf = await this.opts.registry.getWorkflow(name);
+      if (!wf) return toolError("unknown_tool", `workflow '${name}' not found`);
+      return this.executor.run(wf, args as Record<string, unknown>, async (toolName, toolArgs, d) => {
+        return this.dispatchTool(toolName, toolArgs, task, d);
+      }, depth);
+    }
 
     const schema = tool.manifest.inputSchema as Record<string, unknown>;
     const input = coerceStringifiedJsonInput(args, rootJsonSchemaKind(schema));
@@ -405,7 +418,7 @@ export class AgentLoop {
     });
     const durationMs = Date.now() - started;
     this.opts.tracer.log(TRACE_KIND_TOOL_INVOKED, { name, duration: durationMs, ok: result.ok });
-    this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs });
+    this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs, value: result.ok ? result.value : undefined });
     if (result.ok) task.invokedThisSession.add(name);
     return result;
   }

@@ -1,4 +1,5 @@
 import type { ApprovalRecord, Tool, ToolSummary } from "../types.ts";
+import type { Workflow } from "../workflow/types.ts";
 
 export interface ToolRegistry {
   list(): Promise<ToolSummary[]>;
@@ -11,4 +12,6 @@ export interface ToolRegistry {
   getDependents(name: string): Promise<string[]>;
   has(name: string): Promise<boolean>;
   rootDir(): string;
+  /** Load a workflow tool's IR (for kind === "workflow"). Returns null if not found or not a workflow. */
+  getWorkflow(name: string): Promise<Workflow | null>;
 }

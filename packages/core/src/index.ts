@@ -4,19 +4,14 @@ export * from "./schemas.ts";
 export * from "./hash.ts";
 export * from "./errors.ts";
 export {
-  Tracer,
-  TRACE_KIND_EXECUTION_DENIED,
-  TRACE_KIND_FACTORY_REPAIR_LLM,
-  TRACE_KIND_LLM_SYNTHESIS,
-  TRACE_KIND_LLM_SYNTHESIS_START,
-  TRACE_KIND_LLM_TURN,
-  TRACE_KIND_LLM_TURN_START,
-  TRACE_KIND_TOOL_CALL,
-  TRACE_KIND_TOOL_DISPATCH_START,
-  TRACE_KIND_TOOL_INVOKED,
+  Tracer, TRACE_KIND_EXECUTION_DENIED, TRACE_KIND_FACTORY_REPAIR_LLM,
+  TRACE_KIND_LLM_SYNTHESIS, TRACE_KIND_LLM_SYNTHESIS_START, TRACE_KIND_LLM_TURN,
+  TRACE_KIND_LLM_TURN_START, TRACE_KIND_TOOL_CALL, TRACE_KIND_TOOL_DISPATCH_START,
+  TRACE_KIND_TOOL_INVOKED, TRACE_KIND_WORKFLOW_START, TRACE_KIND_WORKFLOW_STEP_START,
+  TRACE_KIND_WORKFLOW_STEP_END, TRACE_KIND_WORKFLOW_END,
 } from "./tracer.ts";
 export type { TraceEvent, TracerObserver, TracerOptions } from "./tracer.ts";
-export type { ToolRegistry } from "./registry/interface.ts";
+export type { ToolRegistry } from "./registry/tool-registry.ts";
 export { FsToolRegistry } from "./registry/fs-registry.ts";
 export type { ToolIndex } from "./index-store/interface.ts";
 export { HybridToolIndex } from "./index-store/hybrid-index.ts";
@@ -41,3 +36,6 @@ export {
   DEBUG_KIND_OPENAI_STRUCTURED_COMPLETION,
 } from "./util/debug.ts";
 export type { DebugEvent, DebugSink } from "./util/debug.ts";
+
+// Workflow IR (LEAN tier)
+export * from "./workflow/index.ts";

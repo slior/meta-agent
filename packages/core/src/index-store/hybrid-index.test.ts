@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HybridToolIndex } from "./hybrid-index.ts";
-import type { ToolRegistry } from "../registry/interface.ts";
+import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ApprovalRecord, Tool, ToolSummary } from "../types.ts";
 
 function mkTool(name: string, description: string, rationale = ""): Tool {
@@ -37,6 +37,7 @@ class StubRegistry implements ToolRegistry {
   async delete() { throw new Error("stub"); }
   async getDependents() { return []; }
   async has(n: string) { return this.tools.some((t) => t.manifest.name === n); }
+  async getWorkflow() { return null; }
 }
 
 test("catalog returns name + short description", async () => {

@@ -29,6 +29,15 @@ export const TRACE_KIND_EXECUTION_DENIED = "execution-denied" as const;
 /** Logged before structured-output repair in ToolFactory (CLI progress). */
 export const TRACE_KIND_FACTORY_REPAIR_LLM = "factory-repair-llm" as const;
 
+/** Logged when a workflow run begins. */
+export const TRACE_KIND_WORKFLOW_START = "workflow-start" as const;
+/** Logged before each step's underlying tool dispatch. */
+export const TRACE_KIND_WORKFLOW_STEP_START = "workflow-step-start" as const;
+/** Logged after each step's underlying tool dispatch. */
+export const TRACE_KIND_WORKFLOW_STEP_END = "workflow-step-end" as const;
+/** Logged when a workflow run completes (success or failure). */
+export const TRACE_KIND_WORKFLOW_END = "workflow-end" as const;
+
 export type TraceEvent = {
   ts: string;
   sessionId: string;

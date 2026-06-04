@@ -50,17 +50,6 @@ ${steps}
 `;
 }
 
-export function reactivePrompt(req: { sliceDescription: string; intent: string; name: string; catalog: ToolSummary[] }): string {
-  return `You are authoring a composite TypeScript tool that reproduces the following successful session slice as a single reusable tool.
-
-${compositePrompt({ name: req.name, intent: req.intent, plannedSteps: [], catalog: req.catalog })}
-
-Original session slice (for reference):
-${req.sliceDescription}
-
-Identify the variable parts of the slice's inputs and make them parameters of the new tool's inputSchema. Stable parts can be baked in as defaults.`;
-}
-
 export function repairPrompt(previousDraft: unknown, errors: string[]): string {
   return `Your previous ToolDraft failed validation with the following errors:
 ${errors.map((e) => `- ${e}`).join("\n")}

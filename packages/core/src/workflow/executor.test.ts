@@ -1,0 +1,145 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { WorkflowExecutor } from "./executor.ts";
+import { Tracer } from "../tracer.ts";
+import type { Workflow } from "./types.ts";
+import type { ToolResult } from "../types.ts";
+
+async function makeTracer(): Promise<{ tracer: Tracer; dir: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "exec-"));
+  const tracer = await Tracer.open(join(dir, "traces"), "s");
+  return { tracer, dir };
+}
+
+const TWO_STEP: Workflow = {
+  schemaVersion: 1,
+  name: "two-step",
+  description: "",
+  goal: "",
+  inputs: [],
+  steps: [
+    {
+      kind: "tool_call",
+      label: "first",
+      tool: "produce",
+      arguments: { x: { kind: "literal", value: 1 } },
+      resultBinding: "a",
+    },
+    {
+      kind: "tool_call",
+      label: "second",
+      tool: "consume",
+      arguments: { y: { kind: "symref", ref: "a" } },
+      resultBinding: "b",
+    },
+  ],
+  return: { source: { kind: "symref", ref: "b" } },
+};
+
+test("executor: happy path; SymRef resolves to prior result", async () => {
+  const { tracer, dir } = await makeTracer();
+  try {
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
+      calls.push({ name, args });
+      if (name === "produce") return { ok: true, value: { from: "produce" } };
+      if (name === "consume") return { ok: true, value: { echoed: args } };
+      return { ok: false, error: { kind: "unknown_tool", message: name } };
+    };
+    const exec = new WorkflowExecutor({ tracer });
+    const out = await exec.run(TWO_STEP, {}, dispatch, 0);
+    assert.equal(out.ok, true);
+    if (out.ok) assert.deepEqual(out.value, { echoed: { y: { from: "produce" } } });
+    assert.deepEqual(calls, [
+      { name: "produce", args: { x: 1 } },
+      { name: "consume", args: { y: { from: "produce" } } },
+    ]);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executor: fail-fast on step error", async () => {
+  const { tracer, dir } = await makeTracer();
+  try {
+    const dispatch = async (): Promise<ToolResult> => ({
+      ok: false,
+      error: { kind: "runtime_error", message: "boom" },
+    });
+    const exec = new WorkflowExecutor({ tracer });
+    const out = await exec.run(TWO_STEP, {}, dispatch, 0);
+    assert.equal(out.ok, false);
+    if (!out.ok) {
+      assert.equal(out.error.kind, "runtime_error");
+      const details = out.error.details as { workflow: string; failedStep: string };
+      assert.equal(details.workflow, "two-step");
+      assert.equal(details.failedStep, "first");
+    }
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executor: null return yields {ok:true, value:null}", async () => {
+  const { tracer, dir } = await makeTracer();
+  try {
+    const wf: Workflow = { ...TWO_STEP, return: null };
+    const dispatch = async (): Promise<ToolResult> => ({ ok: true, value: 42 });
+    const exec = new WorkflowExecutor({ tracer });
+    const out = await exec.run(wf, {}, dispatch, 0);
+    assert.equal(out.ok, true);
+    if (out.ok) assert.equal(out.value, null);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executor: runtime defense for unbound symref", async () => {
+  const { tracer, dir } = await makeTracer();
+  try {
+    const wf: Workflow = {
+      ...TWO_STEP,
+      steps: [
+        {
+          kind: "tool_call",
+          label: "first",
+          tool: "consume",
+          arguments: { y: { kind: "symref", ref: "ghost" } },
+          resultBinding: "b",
+        },
+      ],
+    };
+    const dispatch = async (): Promise<ToolResult> => ({ ok: true, value: null });
+    const exec = new WorkflowExecutor({ tracer });
+    const out = await exec.run(wf, {}, dispatch, 0);
+    assert.equal(out.ok, false);
+    if (!out.ok) {
+      assert.equal(out.error.kind, "schema_violation");
+      const details = out.error.details as { code?: string };
+      assert.equal(details.code, "unbound_symref_runtime");
+    }
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executor: rejects non-empty runtime inputs in v1", async () => {
+  const { tracer, dir } = await makeTracer();
+  try {
+    const dispatch = async (): Promise<ToolResult> => ({ ok: true, value: null });
+    const exec = new WorkflowExecutor({ tracer });
+    const out = await exec.run(TWO_STEP, { foo: 1 }, dispatch, 0);
+    assert.equal(out.ok, false);
+    if (!out.ok) assert.equal(out.error.kind, "schema_violation");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
