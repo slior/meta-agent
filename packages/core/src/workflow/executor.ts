@@ -69,6 +69,8 @@ export class WorkflowExecutor {
    * @returns A Promise that resolves to the workflow's final ToolResult.
    */
   async run(workflow: Workflow, runtimeInputs: Record<string, unknown>, dispatchTool: DispatchTool, depth: number): Promise<ToolResult> {
+    const startedAt = Date.now();
+    this.opts.tracer.log(TRACE_KIND_WORKFLOW_START, { name: workflow.name, depth });
     const env = new Map<string, unknown>();
     for (const input of workflow.inputs) {
       if (Object.prototype.hasOwnProperty.call(runtimeInputs, input.name)) {
@@ -76,18 +78,16 @@ export class WorkflowExecutor {
       } else if (input.required === false) {
         env.set(input.name, input.default);
       } else {
-        return {
+        return this.endWithFailure(workflow, startedAt, {
           ok: false,
           error: {
             kind: "schema_violation",
             message: `missing required input '${input.name}'`,
             details: { code: "missing_required_input", workflow: workflow.name, input: input.name },
           },
-        };
+        });
       }
     }
-    const startedAt = Date.now();
-    this.opts.tracer.log(TRACE_KIND_WORKFLOW_START, { name: workflow.name, depth });
 
     for (const step of workflow.steps) {
       const failure = await this.executeToolCallStep(step, env, workflow, startedAt, dispatchTool, depth);

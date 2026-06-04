@@ -137,6 +137,8 @@ export class ToolFactory {
   async previewWorkflow(req: CreateWorkflowReq): Promise<PreviewWorkflowOutcome> {
     const liftResult = await this.liftSlice(req);
     if (!liftResult.ok) return { ok: false, reason: `lift failed: ${liftResult.errors.map((e) => e.message).join("; ")}` };
+    const validation = await validateWorkflow(liftResult.workflow, this.opts.registry);
+    if (!validation.ok) return { ok: false, reason: `validation failed: ${validation.errors.map((e) => e.message).join("; ")}` };
     return { ok: true, workflow: liftResult.workflow, literalFallbacks: liftResult.literalFallbacks };
   }
 
@@ -183,11 +185,13 @@ export class ToolFactory {
 
     console.log("\n--- Lifted Workflow ---");
     console.log(renderLiterate(workflow));
+    const promotedKeys = new Set((req.promotions ?? []).map((p) => `${p.stepLabel}.${p.argName}`));
+    const remainingFallbacks = literalFallbacks.filter((fb) => !promotedKeys.has(`${fb.stepLabel}.${fb.argName}`));
     console.log("\n--- Literal Fallbacks ---");
-    if (literalFallbacks.length === 0) {
+    if (remainingFallbacks.length === 0) {
       console.log("(none - all arguments are symrefs)");
     } else {
-      for (const fb of literalFallbacks) {
+      for (const fb of remainingFallbacks) {
         console.log(`  ${fb.stepLabel}.${fb.argName}: ${fb.canonicalValue.slice(0, 80)}...`);
       }
     }
