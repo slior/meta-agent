@@ -190,9 +190,9 @@ export type SymRef = {
 
 1. For each invocation in the slice, walk its **unresolved** args:
    - `{ $ref, path }` pointing at a binding **inside the slice** → `symref` to that step's slice-local binding, carrying `path`.
-   - `{ $ref }` pointing at a binding **outside the slice** (before the selected range) → **literal**, using the resolved `value` projected by `path` (recovered from the invocation's resolved args / result store).
+   - `{ $ref }` pointing at a binding **outside the slice** (before the selected range) → **lift error** `ref_out_of_slice` ("step references `<ref>` which is before the selected slice; widen the slice"). This keeps `liftFromTrace` a pure function over the slice (it never needs the result store), and is a clear, actionable message for `/compose`.
    - any other value → existing behavior: value-match against prior whole outputs → `symref`, else `literal`.
-2. Slice-local binding ids keep the existing `r_${i}_${tool}` scheme (`i` = position in slice), so runtime ids are **translated**, not leaked. This preserves "same trace ⇒ byte-identical IR."
+2. Slice-local binding ids keep the existing `r_${i}_${tool}` scheme (`i` = position in slice), so runtime ids are **translated**, not leaked. This preserves "same trace ⇒ byte-identical IR." Translation uses the runtime `binding` recorded on each invocation.
 
 Result for the motivating case:
 
