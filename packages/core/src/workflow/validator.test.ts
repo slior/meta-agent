@@ -258,3 +258,37 @@ test("validator: symref to invalid input name emits both invalid_input_name and 
     assert.ok(res.errors.some((e) => e.code === "unbound_symref"));
   }
 });
+
+function setupWithToolCapabilities(caps: string[]): { registry: ToolRegistry; workflow: Workflow } {
+  const tool: Tool = {
+    ...ATOMIC("telepathy-tool"),
+    manifest: {
+      ...ATOMIC("telepathy-tool").manifest,
+      capabilities: caps,
+    },
+  };
+  const reg = fakeRegistry({ "telepathy-tool": tool });
+  const workflow: Workflow = {
+    schemaVersion: 1,
+    name: "cap-wf",
+    description: "",
+    goal: "",
+    inputs: [],
+    steps: [{
+      kind: "tool_call",
+      label: "call",
+      tool: "telepathy-tool",
+      arguments: {},
+      resultBinding: "r0",
+    }],
+    return: null,
+  };
+  return { registry: reg, workflow };
+}
+
+test("validator rejects a step whose tool declares an unknown capability", async () => {
+  const { registry: reg, workflow } = setupWithToolCapabilities(["telepathy"]);
+  const r = await validate(workflow, reg);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.code === "unknown_capability"));
+});

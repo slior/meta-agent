@@ -22,7 +22,7 @@ export type { LLMProvider, ChatRequest, ChatResponse, ChatMessage, ChatRole, Too
 export { CHAT_ROLE, CHAT_TOOL_CHOICE, CHAT_TOOL_TYPE } from "./llm/interface.ts";
 export { OpenAIProvider } from "./llm/openai-provider.ts";
 export { MockLLMProvider } from "./llm/mock-provider.ts";
-export type { Sandbox, InvokeToolHandler, ExecuteOpts } from "./sandbox/interface.ts";
+export type { Sandbox, InvokeToolHandler, ExecuteOpts } from "./sandbox/sandbox.ts";
 export { NodePermissionSandbox } from "./sandbox/node-permission-sandbox.ts";
 export { SANDBOX_DEBUG_ENV, sandboxDebugEnabled } from "./sandbox/sandbox-debug.ts";
 export { staticValidateDraft, extractImports, extractInvokeToolCalls } from "./factory/static-validator.ts";
@@ -33,6 +33,7 @@ export { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./age
 export type { MetaFnName } from "./agent/meta-tools.ts";
 export { renderSystemPrompt } from "./agent/system-prompt.ts";
 export { AgentLoop } from "./agent/agent-loop.ts";
+export { buildLlmGenerateTool, seedBuiltins, LLM_GENERATE_NAME } from "./agent/builtins.ts";
 export {
   DEBUG_KIND_OPENAI_CHAT_COMPLETION,
   DEBUG_KIND_OPENAI_STRUCTURED_COMPLETION,

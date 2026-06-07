@@ -1,5 +1,6 @@
 import { META_TOOL_NAMES } from "../agent/meta-tools.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
+import { KNOWN_TOOL_CAPABILITIES } from "../types.ts";
 import { IR_SCHEMA_VERSION, STEP_KIND, ARG_KIND, type Argument, type Step, type Workflow } from "./types.ts";
 
 export type ValidationError = {
@@ -145,6 +146,17 @@ export async function validate(workflow: Workflow, registry: ToolRegistry): Prom
     const callee = await registry.get(step.tool);
     if (!callee && !META_TOOL_NAMES.has(step.tool)) {
       pushStepValidationError(errors, step, `${stepPtr}/tool`, "unknown_tool", `tool '${step.tool}' is not in the registry`);
+    }
+
+    if (callee?.manifest.capabilities) {
+      for (const cap of callee.manifest.capabilities) {
+        if (!KNOWN_TOOL_CAPABILITIES.has(cap)) {
+          pushStepValidationError(
+            errors, step, `${stepPtr}/tool`,
+            "unknown_capability", `tool '${step.tool}' declares unknown capability '${cap}'`,
+          );
+        }
+      }
     }
 
     for (const [argName, arg] of Object.entries(step.arguments)) {

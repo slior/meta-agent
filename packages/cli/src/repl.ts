@@ -2,7 +2,7 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import {
   AgentLoop, FsToolRegistry, HybridToolIndex, NodePermissionSandbox,
-  OpenAIProvider, SANDBOX_DEBUG_ENV, TieredApprovalPolicy, ToolFactory, Tracer,
+  OpenAIProvider, SANDBOX_DEBUG_ENV, seedBuiltins, TieredApprovalPolicy, ToolFactory, Tracer,
 } from "@meta-agent/core";
 import { createStderrDebugSink } from "./resolve-debug.ts";
 import { mkdir } from "node:fs/promises";
@@ -24,6 +24,7 @@ export async function runRepl(config: Config): Promise<void> {
   await mkdir(config.tracesDir, { recursive: true });
 
   const registry = await FsToolRegistry.open(config.toolsDir);
+  await seedBuiltins(registry);
   const index = await HybridToolIndex.open(registry);
   const sandbox = new NodePermissionSandbox({
     workspace: config.workspace,

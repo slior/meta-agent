@@ -15,10 +15,13 @@
  * @module sandbox/runner-tool-error
  */
 
+/** Error kinds the sandbox child may emit on stdout `result` frames. */
+export type RunnerToolErrorKind = "runtime_error" | "permission_denied";
+
 /** Failure branch shape compatible with `ToolResult` (see `types.ts`) for `childStdoutResultFrame`. */
 export type RunnerToolFailure = {
   ok: false;
-  error: { kind: "runtime_error"; message: string; details?: unknown };
+  error: { kind: RunnerToolErrorKind; message: string; details?: unknown };
 };
 
 /**
@@ -26,7 +29,7 @@ export type RunnerToolFailure = {
  * Kept colocated under `sandbox/` so the permission child can load it with `runner.ts`.
  */
 export function runnerToolError(
-  kind: "runtime_error",
+  kind: RunnerToolErrorKind,
   message: string,
   details?: unknown,
 ): RunnerToolFailure {

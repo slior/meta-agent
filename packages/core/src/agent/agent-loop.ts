@@ -9,10 +9,10 @@ import {
   type ToolCall,
   type ToolDef,
 } from "../llm/interface.ts";
-import type { Sandbox } from "../sandbox/interface.ts";
+import type { LlmCapabilityRequest, Sandbox } from "../sandbox/sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
-import { TOOL_KIND, type ToolResult } from "../types.ts";
+import { TOOL_CAPABILITY, TOOL_KIND, type ToolResult } from "../types.ts";
 import {
   TRACE_KIND_EXECUTION_DENIED,
   TRACE_KIND_LLM_SYNTHESIS,
@@ -39,6 +39,17 @@ const CATALOG_DESCRIPTION_PREVIEW_MAX = 80;
 
 /** Default stop reason string when the model omits or sends blank `reason`. */
 const DEFAULT_SOLO_STOP_REASON = "stopped";
+
+/** System prompt for the mediated llm_generate capability: the model is a pure data transformer. */
+const LLM_GENERATE_SYSTEM =
+  "You transform the given INPUT according to the INSTRUCTIONS and return only the result. " +
+  "Do not ask questions, do not call tools, do not add commentary.";
+
+/** Renders the user message for an llm capability request. */
+function renderLlmInstruction(instructions: string, input: unknown): string {
+  const rendered = typeof input === "string" ? input : JSON.stringify(input, null, 2);
+  return `${instructions}\n\n--- INPUT ---\n${rendered}`;
+}
 
 const FINAL_SYNTHESIS_SYSTEM = `You are the final answer step for a meta-agent. The conversation above includes the user's request and tool results (JSON in assistant/tool messages).
 Write a concise reply for the user in plain language. Use concrete numbers, paths, and facts from tool results when present. Do not call tools or invent data not supported by the transcript.`;
@@ -375,7 +386,39 @@ export class AgentLoop {
     }
   }
 
+ 
   /**
+   * Handles a mediated LLM (large language model) capability request from a tool executing in the sandbox.
+   *
+   * This function is used as a host-provided capability, allowing sandboxed tools—such as the built-in
+   * `llm_generate`—to securely interact with the LLM provider using structured requests (instructions,
+   * input data, and optional output schema). It constructs a prompt with a strict system message and
+   * a formatted user input, and routes the call to the configured LLM provider. Depending on whether
+   * an output schema is specified, it will request either a structured response or an unstructured string.
+   * Any provider or runtime errors are caught and returned as tool errors.
+   *
+   * @param req - The LLM capability request, specifying instructions, input data, and optional schema.
+   * @returns A ToolResult containing the LLM's output or an error if the operation fails.
+   */
+  private async runLlmCapability(req: LlmCapabilityRequest): Promise<ToolResult> {
+    const messages: ChatMessage[] = [
+      { role: CHAT_ROLE.system, content: LLM_GENERATE_SYSTEM },
+      { role: CHAT_ROLE.user, content: renderLlmInstruction(req.instructions, req.input) },
+    ];
+    try {
+      if (req.schema) {
+        const value = await this.opts.llm.generateStructured({ messages, schemaName: "llm_generate", schema: req.schema });
+        return { ok: true, value };
+      } else {
+        const resp = await this.opts.llm.chat({ messages });
+        return { ok: true, value: resp.message.content ?? "" };
+      }
+    } catch (e) {
+      return toolError("runtime_error", `llm capability failed: ${(e as Error).message}`);
+    }
+  }
+
+   /**
    * Handles invocation of a non-meta-tool ("user", composite, or workflow tools).
    * Validates input, requests approval, invokes the tool in sandbox (or executor for workflows), and records invocation/trace.
    * Updates state for allowed tool invocations.
@@ -416,10 +459,12 @@ export class AgentLoop {
       return toolError("rejected_by_user", decision.reason);
     }
 
+    const wantsLlm = tool.manifest.capabilities?.includes(TOOL_CAPABILITY.llm) ?? false;
     const started = Date.now();
     const result = await this.opts.sandbox.execute(tool, input, decision.token, {
       depth,
       onInvokeTool: (subName, subArgs) => this.dispatchTool(subName, subArgs, task, depth + 1),
+      ...(wantsLlm ? { onLLM: (req) => this.runLlmCapability(req) } : {}),
     });
     const durationMs = Date.now() - started;
     this.opts.tracer.log(TRACE_KIND_TOOL_INVOKED, { name, duration: durationMs, ok: result.ok });

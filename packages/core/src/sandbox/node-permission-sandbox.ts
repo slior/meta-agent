@@ -7,13 +7,14 @@ import { normalizePermissions } from "../permissions-normalize.ts";
 import type { Tool, ToolResult } from "../types.ts";
 import { PERMISSIONS_NET } from "../types.ts";
 import { toolError } from "../errors.ts";
-import type { ExecuteOpts, InvokeToolHandler, Sandbox } from "./interface.ts";
+import type { ExecuteOpts, InvokeToolHandler, LlmHandler, Sandbox } from "./sandbox.ts";
 import { sandboxDebug, sandboxDebugEnabled, sandboxLogError, SANDBOX_DEBUG_ENV } from "./sandbox-debug.ts";
 import {
   META_AGENT_NET_ALLOWLIST_ENV,
   SANDBOX_STDIO_OP,
   type SandboxChildStdinArgsFrame,
   type SandboxChildStdinInvokeToolResultFrame,
+  type SandboxChildStdinLLMResultFrame,
   type SandboxChildStdoutFrame,
 } from "./stdio-protocol.ts";
 
@@ -45,6 +46,7 @@ async function handleChildStdoutJsonLine(
   opts: {
     stdin: NodeJS.WritableStream;
     onInvoke: InvokeToolHandler | undefined;
+    onLLM: LlmHandler | undefined;
     timer: NodeJS.Timeout;
     resolve: (r: ToolResult) => void;
   },
@@ -68,6 +70,21 @@ async function handleChildStdoutJsonLine(
     }
     const reply: SandboxChildStdinInvokeToolResultFrame = {
       op: SANDBOX_STDIO_OP.invokeToolResult,
+      requestId: frame.requestId,
+      result,
+    };
+    opts.stdin.write(JSON.stringify(reply) + "\n");
+  } else if (frame.op === SANDBOX_STDIO_OP.llm) {
+    let result: ToolResult;
+    try {
+      result = opts.onLLM
+        ? await opts.onLLM(frame.req)
+        : toolError("permission_denied", "tool used the llm capability without it being granted");
+    } catch (e) {
+      result = toolError("runtime_error", (e as Error).message);
+    }
+    const reply: SandboxChildStdinLLMResultFrame = {
+      op: SANDBOX_STDIO_OP.llmResult,
       requestId: frame.requestId,
       result,
     };
@@ -156,12 +173,7 @@ export class NodePermissionSandbox implements Sandbox {
    * @param opts Optional execution options, including custom tool file path, invocation handler, and recursion depth.
    * @returns The result of the tool execution as a ToolResult.
    */
-  async execute(
-    tool: Tool,
-    args: unknown,
-    _approvalToken: string,
-    opts: ExecuteOpts = {},
-  ): Promise<ToolResult> {
+  async execute( tool: Tool, args: unknown, _approvalToken: string, opts: ExecuteOpts = {}, ): Promise<ToolResult> {
     if ((opts.depth ?? 0) > this.maxDepth) {
       return toolError("depth_exceeded", `composite recursion depth exceeded ${this.maxDepth}`);
     }
@@ -178,7 +190,7 @@ export class NodePermissionSandbox implements Sandbox {
     }
 
     try {
-      return await this.run(tool, args, toolPath, opts.onInvokeTool, opts.depth ?? 0);
+      return await this.run(tool, args, toolPath, opts.onInvokeTool, opts.onLLM, opts.depth ?? 0);
     } finally {
       if (cleanupDir) await rm(cleanupDir, { recursive: true, force: true });
     }
@@ -225,12 +237,9 @@ export class NodePermissionSandbox implements Sandbox {
    * @returns Resolves to the final ToolResult from execution or from top-level error states.
    */
   private run(
-    tool: Tool,
-    args: unknown,
-    toolPath: string,
-    onInvoke: InvokeToolHandler | undefined,
-    _depth: number,
-  ): Promise<ToolResult> {
+    tool: Tool, args: unknown,
+    toolPath: string, onInvoke: InvokeToolHandler | undefined,
+    onLLM: LlmHandler | undefined, _depth: number, ): Promise<ToolResult> {
     return new Promise<ToolResult>((resolve) => {
       const perms = normalizePermissions(tool.manifest.permissions);
       const flags = this.buildSpawnFlags(tool, toolPath, perms);
@@ -270,6 +279,7 @@ export class NodePermissionSandbox implements Sandbox {
       const stdoutLineOpts = {
         stdin: child.stdin!,
         onInvoke,
+        onLLM,
         timer,
         resolve,
       };

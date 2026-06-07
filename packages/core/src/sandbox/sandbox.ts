@@ -1,4 +1,7 @@
 import type { ApprovalToken, Tool, ToolResult } from "../types.ts";
+import type { LLMCapabilityRequest } from "./stdio-protocol.ts";
+
+export type { LLMCapabilityRequest as LlmCapabilityRequest } from "./stdio-protocol.ts";
 
 /**
  * A handler invoked when a sandboxed tool requests another tool to be executed (composite tool pattern).
@@ -8,6 +11,12 @@ import type { ApprovalToken, Tool, ToolResult } from "../types.ts";
  * @returns A promise resolving to the result of the invoked tool.
  */
 export type InvokeToolHandler = (name: string, args: unknown) => Promise<ToolResult>;
+
+/**
+ * Handler invoked when a capability-bearing tool calls the mediated `llm` capability.
+ * The host performs the model call; the tool never sees network or secrets.
+ */
+export type LlmHandler = (req: LLMCapabilityRequest) => Promise<ToolResult>;
 
 /**
  * Optional settings for sandboxed tool execution.
@@ -21,6 +30,8 @@ export type ExecuteOpts = {
   toolPath?: string;
   /** Handler invoked when the running tool delegates (calls) another tool. Used for composite tools. */
   onInvokeTool?: InvokeToolHandler;
+  /** Handler for the mediated `llm` capability. Wire only for tools that declare `capabilities: ["llm"]`. */
+  onLLM?: LlmHandler;
   /** Current recursion/call depth for composite tool execution. Used to prevent excessive nesting. */
   depth?: number;
 };

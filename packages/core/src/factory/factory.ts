@@ -1,6 +1,6 @@
 import { APPROVAL_DECISION, type ApprovalPolicy } from "../approval/interface.ts";
 import { CHAT_ROLE, type LLMProvider } from "../llm/interface.ts";
-import type { Sandbox } from "../sandbox/interface.ts";
+import type { Sandbox } from "../sandbox/sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ApprovalRecord, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
 import { hashTool } from "../hash.ts";

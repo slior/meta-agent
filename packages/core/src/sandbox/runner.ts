@@ -50,6 +50,9 @@ type RunFn = (input: unknown) => Promise<unknown> | unknown;
  */
 const pendingInvokes = new Map<string, (r: ToolResult) => void>();
 
+/** Pending `llm` calls keyed by `requestId`; the parent completes each with an `llmResult` stdin line. */
+const pendingLlm = new Map<string, (r: ToolResult) => void>();
+
 /**
  * Resolves the promise that waits for the first `args` stdin frame. Assigned in {@link main} before attaching the stdin listener.
  */
@@ -88,6 +91,28 @@ function installInvokeToolGlobal(): void {
 }
 
 installInvokeToolGlobal();
+
+/**
+ * Installs `globalThis.llm` so a capability-bearing tool can request a host LLM call;
+ * each call emits `llm` on stdout and awaits the matching `llmResult` line. Resolves to
+ * the produced value, or throws on a failed `ToolResult`.
+ */
+function installLlmGlobal(): void {
+  (globalThis as unknown as { llm: (req: unknown) => Promise<unknown> }).llm =
+    async function llm(req: unknown) {
+      const requestId = Math.random().toString(36).slice(2);
+      writeStdoutFrame({ op: SANDBOX_STDIO_OP.llm, requestId, req } as SandboxChildStdoutFrame);
+      const result = await new Promise<ToolResult>((resolve) => pendingLlm.set(requestId, resolve));
+      if (!result.ok) {
+        const err = new Error(result.error.message) as Error & { toolErrorKind?: string };
+        err.toolErrorKind = result.error.kind;
+        throw err;
+      }
+      return result.value;
+    };
+}
+
+installLlmGlobal();
 
 /**
  * When `META_AGENT_NET_ALLOWLIST` is non-empty, replaces `globalThis.fetch` with a host allowlist guard.
@@ -159,6 +184,10 @@ function handleParentStdinJsonLine(line: string): void {
       const cb = pendingInvokes.get(frame.requestId);
       pendingInvokes.delete(frame.requestId);
       cb?.(frame.result);
+    } else if (frame.op === SANDBOX_STDIO_OP.llmResult) {
+      const cb = pendingLlm.get(frame.requestId);
+      pendingLlm.delete(frame.requestId);
+      cb?.(frame.result);
     }
   } catch {
     sandboxDebug("ignored malformed stdin JSON line", line);
@@ -200,11 +229,12 @@ async function runToolAndEmitOutcome(mod: { run: RunFn }, args: unknown): Promis
     sandboxDebug("child runner run() returned", "writing success result frame");
     writeStdoutFrame(childStdoutResultFrame({ ok: true, value }));
   } catch (e) {
-    const err = e as Error;
+    const err = e as Error & { toolErrorKind?: string };
     sandboxDebug("child runner run() threw", err.message);
+    const kind = err.toolErrorKind === "permission_denied" ? "permission_denied" : "runtime_error";
     writeStdoutFrame(
       childStdoutResultFrame(
-        runnerToolError("runtime_error", err.message, { stack: err.stack }),
+        runnerToolError(kind, err.message, { stack: err.stack }),
       ),
     );
   }
