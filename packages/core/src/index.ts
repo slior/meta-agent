@@ -34,7 +34,10 @@ export { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./age
 export type { MetaFnName } from "./agent/meta-tools.ts";
 export { renderSystemPrompt } from "./agent/system-prompt.ts";
 export { AgentLoop } from "./agent/agent-loop.ts";
-export { buildLLMGenerateTool as buildLlmGenerateTool, seedBuiltins, LLM_GENERATE_NAME } from "./agent/builtins.ts";
+export {
+  buildLLMGenerateTool as buildLlmGenerateTool, seedBuiltins, LLM_GENERATE_NAME,
+  BUILTIN_APPROVED_BY, isBuiltinApproval,
+} from "./agent/builtins.ts";
 export {
   DEBUG_KIND_OPENAI_CHAT_COMPLETION,
   DEBUG_KIND_OPENAI_STRUCTURED_COMPLETION,

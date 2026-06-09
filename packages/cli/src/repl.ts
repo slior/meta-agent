@@ -9,6 +9,7 @@ import { mkdir } from "node:fs/promises";
 import { CliApprovalPrompter } from "./approval-tui.ts";
 import { runComposeInteraction, type InvocationRecord } from "./compose.ts";
 import { formatTraceEvent } from "./trace-progress.ts";
+import { isToolsCommand, handleToolsCommand } from "./tools-table.ts";
 import type { Config } from "./config.ts";
 
 export async function runRepl(config: Config): Promise<void> {
@@ -66,13 +67,16 @@ export async function runRepl(config: Config): Promise<void> {
     }),
   });
 
-  console.log("meta-agent REPL. Commands: /compose, /tools, /exit. Any other line = task for the agent.\n");
+  console.log("meta-agent REPL. Commands: /compose, /tools [details], /exit. Any other line = task for the agent.\n");
   try {
     while (true) {
       const line = (await rl.question("> ")).trim();
       if (!line) continue;
       if (line === "/exit") break;
-      if (line === "/tools") { console.log(JSON.stringify(registry.listSync(), null, 2)); continue; }
+      if (isToolsCommand(line)) {
+        console.log(await handleToolsCommand(registry, line));
+        continue;
+      }
       if (line === "/compose") { await runComposeInteraction(factory, invocations, rl); continue; }
       const out = await agent.run(line);
       console.log(out);

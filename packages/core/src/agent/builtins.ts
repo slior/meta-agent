@@ -6,6 +6,13 @@ import type { ToolRegistry } from "../registry/tool-registry.ts";
 /** Registry name of the built-in LLM generation primitive. */
 export const LLM_GENERATE_NAME = "llm_generate";
 
+/** Approval `approvedBy` value for trusted built-in tools. */
+export const BUILTIN_APPROVED_BY = "builtin";
+
+export function isBuiltinApproval(approval: ApprovalRecord | null | undefined): boolean {
+  return approval?.approvedBy === BUILTIN_APPROVED_BY;
+}
+
 /** Fixed timestamp so the built-in hash is deterministic across processes. */
 const BUILTIN_EPOCH = "1970-01-01T00:00:00.000Z";
 
@@ -81,7 +88,7 @@ export async function seedBuiltins(registry: ToolRegistry): Promise<void> {
   const approval: ApprovalRecord = {
     hash: tool.manifest.hash,
     approvedAt: BUILTIN_EPOCH,
-    approvedBy: "builtin",
+    approvedBy: BUILTIN_APPROVED_BY,
     alwaysApprove: true,
     notes: "Trusted built-in seeded by the host.",
   };
