@@ -8,7 +8,7 @@ import {
   type LLMProvider,
   type ToolCall,
   type ToolDef,
-} from "../llm/interface.ts";
+} from "../llm/LLMProvider.ts";
 import type { LlmCapabilityRequest, Sandbox } from "../sandbox/sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
@@ -19,11 +19,13 @@ import {
   TRACE_KIND_LLM_SYNTHESIS_START,
   TRACE_KIND_LLM_TURN,
   TRACE_KIND_LLM_TURN_START,
+  LLM_TRACE_PHASE,
   TRACE_KIND_TOOL_CALL,
   TRACE_KIND_TOOL_DISPATCH_START,
   TRACE_KIND_TOOL_INVOKED,
   type Tracer,
 } from "../tracer.ts";
+import { ResultStore, describeForModel, resolveRefs, sanitizeBinding } from "./result-store.ts";
 import { coerceStringifiedJsonInput, rootJsonSchemaKind } from "./coerce-tool-input.ts";
 import { renderSystemPrompt } from "./system-prompt.ts";
 import { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./meta-tools.ts";
@@ -66,7 +68,24 @@ export const EMPTY_FIND_RECOVERY_USER =
   `That means no registry tool matched — it is not an error. Next use ${META_FN.proposeNewTool} or ${META_FN.proposeCompositeTool}, or ${META_FN.listTools} if you need the full catalog; you may try ${META_FN.findTool} again with a sharper query. ` +
   "Do not answer with only prose unless you have genuinely exhausted these options.";
 
-export type ToolInvokedEvent = { name: string; args: unknown; ok: boolean; durationMs: number; value?: unknown };
+/**
+ * Represents a record of a tool invocation, including its arguments, outcome, and metadata.
+ *
+ * @property name - The name of the tool that was invoked.
+ * @property args - The input arguments provided to the tool.
+ * @property ok - Whether the invocation was successful (true) or resulted in an error (false).
+ * @property durationMs - The time taken in milliseconds to complete the tool invocation.
+ * @property value - (Optional) The returned value from the tool if the invocation was successful.
+ * @property binding - (Optional) A variable binding name associated with the result for reference by the agent.
+ */
+export type ToolInvokedEvent = {
+  name: string;
+  args: unknown;
+  ok: boolean;
+  durationMs: number;
+  value?: unknown;
+  binding?: string;
+};
 
 /**
  * Options for constructing an {@link AgentLoop}.
@@ -130,6 +149,9 @@ export class AgentLoop {
   private readonly ajv = new Ajv({ strict: false });
   /** In-process executor for workflow-kind tools. */
   private readonly executor: WorkflowExecutor;
+  private readonly resultStore = new ResultStore();
+  private invocationSeq = 0;
+  private lastDepth0Binding: string | null = null;
 
   /**
    * Constructs an AgentLoop, binding its dependencies and policies.
@@ -173,6 +195,7 @@ export class AgentLoop {
     const resp = await this.opts.llm.chat({
       messages: [{ role: CHAT_ROLE.system, content: system }, ...messages],
       tools,
+      traceTag: LLM_TRACE_PHASE.orchestration,
     });
     this.opts.tracer.log(TRACE_KIND_LLM_TURN, { turn, usage: resp.usage ?? null });
     messages.push(resp.message);
@@ -234,9 +257,26 @@ export class AgentLoop {
     messages.push({
       role: CHAT_ROLE.tool,
       tool_call_id: call.id,
-      content: JSON.stringify(result),
+      content: (() => {
+        const isInvoke = call.function.name === META_FN.invokeTool;
+        const elided =
+          isInvoke && result.ok && this.lastDepth0Binding !== null
+            ? JSON.stringify(describeForModel(result.ok ? result.value : null, this.lastDepth0Binding))
+            : JSON.stringify(result);
+        this.lastDepth0Binding = null;
+        return elided;
+      })(),
     });
     return { done: false, invokeFailed, emptyFind };
+  }
+
+  /** Stores a successful depth-0 tool result under a fresh binding and remembers it for elision. */
+  private storeDepth0Result(name: string, result: ToolResult): string | null {
+    if (!result.ok) { this.lastDepth0Binding = null; return null; }
+    const binding = `r_${this.invocationSeq++}_${sanitizeBinding(name)}`;
+    this.resultStore.put(binding, result.value);
+    this.lastDepth0Binding = binding;
+    return binding;
   }
 
   /**
@@ -279,6 +319,7 @@ export class AgentLoop {
     const syn = await this.opts.llm.chat({
       messages: [{ role: CHAT_ROLE.system, content: FINAL_SYNTHESIS_SYSTEM }, ...messages],
       toolChoice: CHAT_TOOL_CHOICE.none,
+      traceTag: LLM_TRACE_PHASE.synthesis,
     });
     this.opts.tracer.log(TRACE_KIND_LLM_SYNTHESIS, { usage: syn.usage ?? null });
 
@@ -407,10 +448,10 @@ export class AgentLoop {
     ];
     try {
       if (req.schema) {
-        const value = await this.opts.llm.generateStructured({ messages, schemaName: "llm_generate", schema: req.schema });
+        const value = await this.opts.llm.generateStructured({ messages, schemaName: "llm_generate", schema: req.schema, traceTag: LLM_TRACE_PHASE.capability });
         return { ok: true, value };
       } else {
-        const resp = await this.opts.llm.chat({ messages });
+        const resp = await this.opts.llm.chat({ messages, traceTag: LLM_TRACE_PHASE.capability });
         return { ok: true, value: resp.message.content ?? "" };
       }
     } catch (e) {
@@ -432,22 +473,35 @@ export class AgentLoop {
     const tool = await this.opts.registry.get(name);
     if (!tool) return toolError("unknown_tool", `no tool named '${name}'`);
 
+    // At the agent boundary (depth 0), arguments may carry { $ref } sentinels pointing at prior
+    // results the agent never saw in full. Resolve them to concrete values before validation/execution;
+    // keep the unresolved form (`recordArgs`) for lift.
+    const recordArgs = args;
+    let effectiveArgs = args;
+    if (depth === 0) {
+      const resolved = resolveRefs(args, this.resultStore);
+      if (!resolved.ok) return toolError("schema_violation", resolved.error);
+      effectiveArgs = resolved.value;
+    }
+
     // Workflow tools run in-process via WorkflowExecutor
     if (tool.manifest.kind === TOOL_KIND.workflow) {
       const wf = await this.opts.registry.getWorkflow(name);
       if (!wf) return toolError("unknown_tool", `workflow '${name}' not found`);
       const schema = tool.manifest.inputSchema as Record<string, unknown>;
-      const input = coerceStringifiedJsonInput(args, rootJsonSchemaKind(schema));
+      const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
       if (!this.ajv.validate(schema, input)) {
         return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
       }
-      return this.executor.run(wf, input as Record<string, unknown>, async (toolName, toolArgs, d) => {
+      const result = await this.executor.run(wf, input as Record<string, unknown>, async (toolName, toolArgs, d) => {
         return this.dispatchTool(toolName, toolArgs, task, d);
       }, depth);
+      if (depth === 0) this.storeDepth0Result(name, result);
+      return result;
     }
 
     const schema = tool.manifest.inputSchema as Record<string, unknown>;
-    const input = coerceStringifiedJsonInput(args, rootJsonSchemaKind(schema));
+    const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
 
     const valid = this.ajv.validate(tool.manifest.inputSchema, input);
     if (!valid) return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
@@ -468,7 +522,12 @@ export class AgentLoop {
     });
     const durationMs = Date.now() - started;
     this.opts.tracer.log(TRACE_KIND_TOOL_INVOKED, { name, duration: durationMs, ok: result.ok });
-    this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs, value: result.ok ? result.value : undefined });
+    if (depth === 0) {
+      const binding = this.storeDepth0Result(name, result);
+      this.opts.onToolInvoked?.({ name, args: recordArgs, ok: result.ok, durationMs, value: result.ok ? result.value : undefined, ...(binding !== null ? { binding } : {}) });
+    } else {
+      this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs, value: result.ok ? result.value : undefined });
+    }
     if (result.ok) task.invokedThisSession.add(name);
     return result;
   }

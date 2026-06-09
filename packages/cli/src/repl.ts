@@ -2,7 +2,7 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import {
   AgentLoop, FsToolRegistry, HybridToolIndex, NodePermissionSandbox,
-  OpenAIProvider, SANDBOX_DEBUG_ENV, seedBuiltins, TieredApprovalPolicy, ToolFactory, Tracer,
+  OpenAIProvider, SANDBOX_DEBUG_ENV, seedBuiltins, TieredApprovalPolicy, ToolFactory, Tracer, TracingLLMProvider,
 } from "@meta-agent/core";
 import { createStderrDebugSink } from "./resolve-debug.ts";
 import { mkdir } from "node:fs/promises";
@@ -34,12 +34,6 @@ export async function runRepl(config: Config): Promise<void> {
   const rl = readline.createInterface({ input, output });
   const prompter = new CliApprovalPrompter(rl);
   const approval = new TieredApprovalPolicy(prompter, { workspace: config.workspace, yolo: config.yolo });
-  const llm = new OpenAIProvider({
-    apiKey,
-    ...(config.llm.baseURL !== undefined ? { baseURL: config.llm.baseURL } : {}),
-    model: config.llm.model,
-    ...(config.debug ? { debug: createStderrDebugSink() } : {}),
-  });
 
   const sessionId = Date.now().toString(36);
   const tracer = await Tracer.open(config.tracesDir, sessionId, {
@@ -48,6 +42,16 @@ export async function runRepl(config: Config): Promise<void> {
       if (line) process.stderr.write(line + "\n");
     }],
   });
+
+  const llm = new TracingLLMProvider(
+    new OpenAIProvider({
+      apiKey,
+      ...(config.llm.baseURL !== undefined ? { baseURL: config.llm.baseURL } : {}),
+      model: config.llm.model,
+      ...(config.debug ? { debug: createStderrDebugSink() } : {}),
+    }),
+    tracer,
+  );
   const invocations: InvocationRecord[] = [];
 
   const factory = new ToolFactory({
@@ -56,7 +60,10 @@ export async function runRepl(config: Config): Promise<void> {
   const agent = new AgentLoop({
     llm, registry, index, sandbox, approval, factory, tracer,
     maxTurns: config.maxTurns,
-    onToolInvoked: (ev) => invocations.push({ name: ev.name, args: ev.args, ok: ev.ok, value: ev.value }),
+    onToolInvoked: (ev) => invocations.push({
+      name: ev.name, args: ev.args, ok: ev.ok, value: ev.value,
+      ...(ev.binding !== undefined ? { binding: ev.binding } : {}),
+    }),
   });
 
   console.log("meta-agent REPL. Commands: /compose, /tools, /exit. Any other line = task for the agent.\n");

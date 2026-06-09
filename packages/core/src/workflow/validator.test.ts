@@ -292,3 +292,17 @@ test("validator rejects a step whose tool declares an unknown capability", async
   assert.equal(r.ok, false);
   if (!r.ok) assert.ok(r.errors.some((e) => e.code === "unknown_capability"));
 });
+
+test("validator: symref with single-key path is accepted", async () => {
+  const reg = fakeRegistry({ "fetch-webpage-text": ATOMIC("fetch-webpage-text", {}), "write-file-text": ATOMIC("write-file-text", {}) });
+  const wf: Workflow = {
+    schemaVersion: 1, name: "wf", description: "", goal: "", inputs: [],
+    steps: [
+      { kind: "tool_call", label: "s0", tool: "fetch-webpage-text", arguments: {}, resultBinding: "r_0_fetch" },
+      { kind: "tool_call", label: "s1", tool: "write-file-text", arguments: { content: { kind: "symref", ref: "r_0_fetch", path: "text" } }, resultBinding: "r_1_write" },
+    ],
+    return: { source: { kind: "symref", ref: "r_1_write" } },
+  };
+  const res = await validate(wf, reg);
+  assert.equal(res.ok, true);
+});

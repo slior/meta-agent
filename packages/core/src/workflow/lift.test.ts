@@ -36,6 +36,11 @@ const TOOLS: Record<string, Tool> = {
   "count-rows": COUNT,
 };
 
+const REF_TOOLS: Record<string, Tool> = {
+  fetch: { ...FETCH, manifest: { ...FETCH.manifest, name: "fetch" } },
+  summarize: { ...FETCH, manifest: { ...FETCH.manifest, name: "summarize" } },
+};
+
 const SLICE = [
   { name: "read-csv", args: { path: "/x.csv" }, ok: true as const, value: [{ a: 1, b: 2 }, { a: 3, b: 4 }] },
   { name: "filter-rows", args: { rows: [{ a: 1, b: 2 }, { a: 3, b: 4 }], predicate: "a > 1" }, ok: true as const, value: [{ a: 3, b: 4 }] },
@@ -214,4 +219,35 @@ test("inputSchemaFromInputs: required, defaults, and descriptions project correc
     required: ["path"],
     additionalProperties: false,
   });
+});
+
+test("lift: $ref sentinel arg becomes a symref with path; out-of-slice ref errors", () => {
+  const slice = [
+    { name: "fetch", args: {}, ok: true as const, value: { text: "BODY" }, binding: "r_0_fetch" },
+    {
+      name: "summarize",
+      args: { input: { $ref: "r_0_fetch", path: "text" } },
+      ok: true as const, value: "SUMMARY", binding: "r_1_summarize",
+    },
+  ];
+  const out = liftFromTrace({ slice, name: "wf", description: "d", goal: "g", toolsByName: REF_TOOLS });
+  assert.equal(out.ok, true);
+  const step1 = (out as { ok: true; workflow: { steps: Array<{ arguments: Record<string, unknown> }> } }).workflow.steps[1]!;
+  assert.deepEqual(step1.arguments.input, { kind: "symref", ref: "r_0_fetch", path: "text" });
+
+  const out2 = liftFromTrace({ slice: [slice[1]!], name: "wf", description: "d", goal: "g", toolsByName: REF_TOOLS });
+  assert.equal(out2.ok, false);
+  assert.equal((out2 as { ok: false; errors: Array<{ code: string }> }).errors[0]!.code, "ref_out_of_slice");
+});
+
+test("lift: runtime binding ids are translated to slice-local ids", () => {
+  const slice = [
+    { name: "fetch", args: {}, ok: true as const, value: { text: "BODY" }, binding: "r_7_fetch" },
+    { name: "summarize", args: { input: { $ref: "r_7_fetch", path: "text" } }, ok: true as const, value: "S", binding: "r_8_summarize" },
+  ];
+  const out = liftFromTrace({ slice, name: "wf", description: "d", goal: "g", toolsByName: REF_TOOLS });
+  assert.equal(out.ok, true);
+  const wf = (out as { ok: true; workflow: { steps: Array<{ resultBinding: string; arguments: Record<string, { ref?: string }> }> } }).workflow;
+  assert.equal(wf.steps[0]!.resultBinding, "r_0_fetch");
+  assert.equal(wf.steps[1]!.arguments.input!.ref, "r_0_fetch");
 });

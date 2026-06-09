@@ -33,12 +33,12 @@ const LLM_GENERATE_CODE = `export async function run(input) {
  *
  * @returns {Tool} The `llm_generate` tool object containing its manifest (with hash) and source code.
  */
-export function buildLlmGenerateTool(): Tool {
+export function buildLLMGenerateTool(): Tool {
   const manifestNoHash: Omit<ToolManifest, "hash"> = {
     name: LLM_GENERATE_NAME,
     description:
       "Generate a value with the language model from an instruction and raw input data. " +
-      "Pass prior tool outputs as input unchanged; do not pre-summarize or excerpt. " +
+      "Pass the prior tool's output by reference as input ({ \"$ref\": \"<binding>\", \"path\": \"<optional key>\" }); do not pre-summarize or excerpt. " +
       "Returns the model's output (a string unless outputSchema is given).",
     rationale: "Built-in primitive that lets a workflow step produce a value via the LLM, captured as a SymRef-able result.",
     inputSchema: {
@@ -50,7 +50,7 @@ export function buildLlmGenerateTool(): Tool {
         },
         input: {
           description:
-            "Raw data to transform (any JSON value). When chaining tools, pass the prior tool's return value unchanged—do not pre-summarize.",
+            "Raw data to transform (any JSON value). When chaining tools, pass the prior tool's result by reference ({ \"$ref\": \"<binding>\", \"path\"? }) unchanged—do not pre-summarize.",
         },
         outputSchema: { type: "object", description: "Optional JSON Schema; when present, structured output is requested." },
       },
@@ -77,7 +77,7 @@ export function buildLlmGenerateTool(): Tool {
  */
 export async function seedBuiltins(registry: ToolRegistry): Promise<void> {
   if (await registry.has(LLM_GENERATE_NAME)) return;
-  const tool = buildLlmGenerateTool();
+  const tool = buildLLMGenerateTool();
   const approval: ApprovalRecord = {
     hash: tool.manifest.hash,
     approvedAt: BUILTIN_EPOCH,

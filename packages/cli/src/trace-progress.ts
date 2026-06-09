@@ -1,6 +1,7 @@
 import {
   TRACE_KIND_EXECUTION_DENIED,
   TRACE_KIND_FACTORY_REPAIR_LLM,
+  TRACE_KIND_LLM_CALL,
   TRACE_KIND_LLM_SYNTHESIS,
   TRACE_KIND_LLM_SYNTHESIS_START,
   TRACE_KIND_LLM_TURN,
@@ -81,6 +82,11 @@ export function formatTraceEvent(e: TraceEvent): string | null {
     }
     case "factory-gen-draft": {
       return `[meta-agent] Generating tool code…`;
+    }
+    case TRACE_KIND_LLM_CALL: {
+      const phase = String(e.data.phase ?? "unknown");
+      const method = String(e.data.method ?? "chat");
+      return `[meta-agent] LLM ${method} (${phase}) recorded`;
     }
     default: {
       return `[meta-agent] ${e.kind}`;

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isRefSentinel } from "../agent/result-store.ts";
 import { canonicalJson } from "../hash.ts";
 import { normalizePermissions } from "../permissions-normalize.ts";
 import { TOOL_KIND, type Tool, type ToolManifest, type Permissions } from "../types.ts";
@@ -18,6 +19,8 @@ export type Invocation = {
   ok: boolean;
   /** Present iff ok === true. */
   value: unknown;
+  /** Runtime result-binding id assigned when the invocation ran (used to translate `$ref`s). */
+  binding?: string;
 };
 
 /**
@@ -51,6 +54,7 @@ export type LiteralFallback = {
 type LiftedStepsResult = {
   steps: ToolCallStep[];
   literalFallbacks: LiteralFallback[];
+  errors: LiftError[];
 };
 
 /**
@@ -116,7 +120,8 @@ export function liftFromTrace(req: LiftRequest): LiftResult {
     }
   }
 
-  const { steps, literalFallbacks } = liftStepsFromInvocations(successes);
+  const { steps, literalFallbacks, errors } = liftStepsFromInvocations(successes);
+  if (errors.length > 0) return { ok: false, errors };
 
   const lastBinding = steps[steps.length - 1]!.resultBinding;
   const workflow: Workflow = {
@@ -157,15 +162,19 @@ export function liftFromTrace(req: LiftRequest): LiftResult {
 function liftStepsFromInvocations(successes: Invocation[]): LiftedStepsResult {
   const steps: ToolCallStep[] = [];
   const bindingByValue = new Map<string, string>();
+  const runtimeToLocal = new Map<string, string>();
   const literalFallbacks: LiteralFallback[] = [];
+  const errors: LiftError[] = [];
 
   for (let i = 0; i < successes.length; i++) {
     const inv = successes[i]!;
     const safe = sanitize(inv.name);
     const label = `step_${i}_${safe}`;
     const binding = `r_${i}_${safe}`;
+    // Map the runtime binding (what the agent referenced) to this slice-local binding.
+    runtimeToLocal.set(inv.binding ?? binding, binding);
 
-    const args = liftStepArguments(inv.args, bindingByValue, label, literalFallbacks);
+    const args = liftStepArguments(inv.args, bindingByValue, runtimeToLocal, label, literalFallbacks, errors);
 
     steps.push({ kind: STEP_KIND.tool_call, label, tool: inv.name, arguments: args, resultBinding: binding, });
 
@@ -173,7 +182,7 @@ function liftStepsFromInvocations(successes: Invocation[]): LiftedStepsResult {
     if (!bindingByValue.has(ck)) bindingByValue.set(ck, binding);
   }
 
-  return { steps, literalFallbacks };
+  return { steps, literalFallbacks, errors };
 }
 
 /**
@@ -190,9 +199,27 @@ function liftStepsFromInvocations(successes: Invocation[]): LiftedStepsResult {
  *
  * @returns Workflow IR arguments keyed by argument name.
  */
-function liftStepArguments( rawArgs: unknown, bindingByValue: ReadonlyMap<string, string>, stepLabel: string, literalFallbacks: LiteralFallback[], ): Record<string, Argument> {
+function liftStepArguments(
+  rawArgs: unknown,
+  bindingByValue: ReadonlyMap<string, string>,
+  runtimeToLocal: ReadonlyMap<string, string>,
+  stepLabel: string,
+  literalFallbacks: LiteralFallback[],
+  errors: LiftError[],
+): Record<string, Argument> {
   const args: Record<string, Argument> = {};
   for (const [k, v] of Object.entries((rawArgs ?? {}) as Record<string, unknown>)) {
+    if (isRefSentinel(v)) {
+      const local = runtimeToLocal.get(v.$ref);
+      if (local === undefined) {
+        errors.push({ code: "ref_out_of_slice", message: `step '${stepLabel}' argument '${k}' references '${v.$ref}', which is before the selected slice; widen the slice` });
+        // Emit a placeholder symref so step shape is well-formed; the error aborts the lift anyway.
+        args[k] = { kind: ARG_KIND.symref, ref: v.$ref, ...(v.path !== undefined ? { path: v.path } : {}) };
+        continue;
+      }
+      args[k] = { kind: ARG_KIND.symref, ref: local, ...(v.path !== undefined ? { path: v.path } : {}) };
+      continue;
+    }
     const ck = canonicalJson(v);
     const hit = bindingByValue.get(ck);
     if (hit !== undefined) {

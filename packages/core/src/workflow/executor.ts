@@ -182,5 +182,10 @@ export class WorkflowExecutor {
 function resolveArgument(arg: Argument, env: ReadonlyMap<string, unknown>): { bound: true; value: unknown } | { bound: false } {
   if (arg.kind === ARG_KIND.literal) return { bound: true, value: arg.value };
   if (!env.has(arg.ref)) return { bound: false };
-  return { bound: true, value: env.get(arg.ref) };
+  const base = env.get(arg.ref);
+  if (arg.path === undefined) return { bound: true, value: base };
+  if (typeof base !== "object" || base === null || Array.isArray(base) || !(arg.path in (base as Record<string, unknown>))) {
+    return { bound: false };
+  }
+  return { bound: true, value: (base as Record<string, unknown>)[arg.path] };
 }

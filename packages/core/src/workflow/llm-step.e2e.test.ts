@@ -7,8 +7,8 @@ import { WorkflowExecutor } from "./executor.ts";
 import { Tracer } from "../tracer.ts";
 import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
 import { MockLLMProvider } from "../llm/mock-provider.ts";
-import { buildLlmGenerateTool, LLM_GENERATE_NAME } from "../agent/builtins.ts";
-import { CHAT_ROLE } from "../llm/interface.ts";
+import { buildLLMGenerateTool, LLM_GENERATE_NAME } from "../agent/builtins.ts";
+import { CHAT_ROLE } from "../llm/LLMProvider.ts";
 import { toolError } from "../errors.ts";
 import type { Workflow } from "./types.ts";
 import type { ToolResult } from "../types.ts";
@@ -44,7 +44,7 @@ test("workflow step produces a value through the mediated llm capability", async
       return { message: { role: "assistant", content: "SHORT SUMMARY" } };
     });
     const sandbox = new NodePermissionSandbox({ workspace: dir });
-    const tool = buildLlmGenerateTool();
+    const tool = buildLLMGenerateTool();
 
     const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
       if (name !== LLM_GENERATE_NAME) return toolError("unknown_tool", name);

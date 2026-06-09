@@ -1,4 +1,4 @@
-import type { ChatRequest, ChatResponse, LLMProvider, StructuredRequest } from "./interface.ts";
+import type { ChatRequest, ChatResponse, LLMProvider, StructuredRequest } from "./LLMProvider.ts";
 
 export type ChatHandler = (req: ChatRequest, turn: number) => ChatResponse | Promise<ChatResponse>;
 export type StructuredHandler<T = unknown> = (req: StructuredRequest, turn: number) => T | Promise<T>;

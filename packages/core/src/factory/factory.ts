@@ -1,5 +1,5 @@
 import { APPROVAL_DECISION, type ApprovalPolicy } from "../approval/interface.ts";
-import { CHAT_ROLE, type LLMProvider } from "../llm/interface.ts";
+import { CHAT_ROLE, type LLMProvider } from "../llm/LLMProvider.ts";
 import type { Sandbox } from "../sandbox/sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ApprovalRecord, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
@@ -7,7 +7,7 @@ import { hashTool } from "../hash.ts";
 import { normalizePermissions } from "../permissions-normalize.ts";
 import { staticValidateDraft, type ValidationResult } from "./static-validator.ts";
 import { atomicPrompt, compositePrompt, repairPrompt, DRAFT_SCHEMA } from "./code-gen-prompts.ts";
-import { TRACE_KIND_FACTORY_REPAIR_LLM, type Tracer } from "../tracer.ts";
+import { LLM_TRACE_PHASE, TRACE_KIND_FACTORY_REPAIR_LLM, type Tracer } from "../tracer.ts";
 import { liftFromTrace, inputSchemaFromInputs, type Invocation, type LiftResult, type LiteralFallback } from "../workflow/lift.ts";
 import { parameterize, type Promotion } from "../workflow/parameterize.ts";
 import { validate as validateWorkflow } from "../workflow/validator.ts";
@@ -352,6 +352,7 @@ export class ToolFactory {
       messages: [{ role: CHAT_ROLE.system, content: systemPrompt }],
       schemaName: "ToolDraft",
       schema: DRAFT_SCHEMA,
+      traceTag: LLM_TRACE_PHASE.factoryDraft,
     });
   }
 
@@ -369,6 +370,7 @@ export class ToolFactory {
       ],
       schemaName: "ToolDraft",
       schema: DRAFT_SCHEMA,
+      traceTag: LLM_TRACE_PHASE.factoryRepair,
     });
   }
 }

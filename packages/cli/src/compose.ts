@@ -1,7 +1,21 @@
 import type { ToolFactory, Promotion } from "@meta-agent/core";
 import type { ReadlinePromisesInterface } from "./approval-tui.ts";
 
-export type InvocationRecord = { name: string; args: unknown; ok: boolean; value?: unknown };
+/**
+ * Represents a single invocation of a tool during a session.
+ * @property name - The name of the tool invoked.
+ * @property args - The arguments passed to the tool.
+ * @property ok - Whether the invocation was successful.
+ * @property value - (Optional) The resulting value from the tool invocation if successful.
+ * @property binding - (Optional) A variable binding associated with the result, if any.
+ */
+export type InvocationRecord = {
+  name: string;
+  args: unknown;
+  ok: boolean;
+  value?: unknown;
+  binding?: string;
+};
 
 export async function runComposeInteraction(
   factory: ToolFactory,
@@ -29,7 +43,7 @@ export async function runComposeInteraction(
   const intent = (await rl.question("Intent (1-2 sentences): ")).trim();
   const description = (await rl.question("Description: ")).trim();
 
-  const liftSlice = slice.map((s) => ({ name: s.name, args: s.args, ok: s.ok, value: s.value ?? null }));
+  const liftSlice = slice.map((s) => ({ name: s.name, args: s.args, ok: s.ok, value: s.value ?? null, ...(s.binding !== undefined ? { binding: s.binding } : {}) }));
 
   const preview = await factory.previewWorkflow({ slice: liftSlice, name, intent, description });
   if (!preview.ok) { console.log(`rejected: ${preview.reason}`); return; }

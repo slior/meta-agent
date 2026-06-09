@@ -29,6 +29,20 @@ export const TRACE_KIND_EXECUTION_DENIED = "execution-denied" as const;
 /** Logged before structured-output repair in ToolFactory (CLI progress). */
 export const TRACE_KIND_FACTORY_REPAIR_LLM = "factory-repair-llm" as const;
 
+/** `TraceEvent.kind` carrying the full request/response of one host LLM call (content, not just usage). */
+export const TRACE_KIND_LLM_CALL = "llm-call" as const;
+
+/** Attribution tag for an {@link TRACE_KIND_LLM_CALL} event, identifying which host path made the call. */
+export const LLM_TRACE_PHASE = {
+  orchestration: "orchestration",
+  synthesis: "synthesis",
+  capability: "capability",
+  factoryDraft: "factory-draft",
+  factoryRepair: "factory-repair",
+  unknown: "unknown",
+} as const;
+export type LlmTracePhase = (typeof LLM_TRACE_PHASE)[keyof typeof LLM_TRACE_PHASE];
+
 /** Logged when a workflow run begins. */
 export const TRACE_KIND_WORKFLOW_START = "workflow-start" as const;
 /** Logged before each step's underlying tool dispatch. */

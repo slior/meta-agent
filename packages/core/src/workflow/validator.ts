@@ -47,7 +47,7 @@ function pushStepValidationError(
  *       - No use of reserved meta-tools as steps.
  *       - Each tool used is present in the registry.
  *       - Symref arguments only reference valid, previously bound names.
- *       - SymRef.path is not used (reserved for future tiers).
+ *       - SymRef.path (single-key projection) is accepted; if present it must be a non-empty string.
  *       - Arguments match inputSchema requirements for each tool.
  *   - The workflow return (if present) references a bound result name.
  *
@@ -192,7 +192,7 @@ type SymRefArgument = Extract<Argument, { kind: typeof ARG_KIND.symref }>;
 
 /**
  * Validates a symref step argument: ref must name a prior step binding;
- * `path` is rejected in v1 (reserved for tier B).
+ * `path` (single-key projection) must be a non-empty string when present.
  */
 function validateSymRefArgument(
   errors: ValidationError[],
@@ -206,8 +206,9 @@ function validateSymRefArgument(
       "unbound_symref", `argument '${argName}' references unbound name '${arg.ref}'`,
     );
   }
-  if ((arg as Argument & { path?: unknown }).path !== undefined) {
-    pushStepValidationError(errors, step, argPtr, "symref_path_not_supported_in_v1", "SymRef.path is reserved for tier B");
+  const path = (arg as Argument & { path?: unknown }).path;
+  if (path !== undefined && (typeof path !== "string" || path.length === 0)) {
+    pushStepValidationError(errors, step, argPtr, "invalid_symref_path", "SymRef.path must be a non-empty string");
   }
 }
 

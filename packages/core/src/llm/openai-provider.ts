@@ -10,7 +10,7 @@ import {
   type LLMProvider,
   type StructuredRequest,
   type ToolCall,
-} from "./interface.ts";
+} from "./LLMProvider.ts";
 import {
   DEBUG_KIND_OPENAI_CHAT_COMPLETION,
   DEBUG_KIND_OPENAI_STRUCTURED_COMPLETION,

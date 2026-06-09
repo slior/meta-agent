@@ -218,3 +218,30 @@ test("executor: optional input uses supplied value when provided, not default", 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("executor resolves a symref with path projection", async () => {
+  const { tracer, dir } = await makeTracer();
+  try {
+    const wf: Workflow = {
+      schemaVersion: 1, name: "wf", description: "", goal: "", inputs: [],
+      steps: [
+        { kind: "tool_call", label: "s0", tool: "fetch", arguments: {}, resultBinding: "r_0_fetch" },
+        { kind: "tool_call", label: "s1", tool: "echo", arguments: { input: { kind: "symref", ref: "r_0_fetch", path: "text" } }, resultBinding: "r_1_echo" },
+      ],
+      return: { source: { kind: "symref", ref: "r_1_echo" } },
+    };
+    const seen: Array<{ name: string; args: unknown }> = [];
+    const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
+      seen.push({ name, args });
+      if (name === "fetch") return { ok: true, value: { text: "HELLO", title: "t" } };
+      return { ok: true, value: (args as { input: unknown }).input };
+    };
+    const res = await new WorkflowExecutor({ tracer }).run(wf, {}, dispatch, 0);
+    assert.equal(res.ok, true);
+    assert.equal((res as { ok: true; value: unknown }).value, "HELLO");
+    assert.deepEqual(seen[1]!.args, { input: "HELLO" });
+  } finally {
+    await tracer.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

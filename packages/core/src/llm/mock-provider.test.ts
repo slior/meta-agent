@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CHAT_ROLE } from "./interface.ts";
+import { CHAT_ROLE } from "./LLMProvider.ts";
 import { MockLLMProvider } from "./mock-provider.ts";
 
 test("MockLLMProvider dispatches handlers in order", async () => {

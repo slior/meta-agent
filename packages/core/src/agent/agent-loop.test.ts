@@ -11,7 +11,7 @@ import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
-import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/interface.ts";
+import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/LLMProvider.ts";
 import { META_FN } from "./meta-tools.ts";
 import type { ApprovalRecord, Tool } from "../types.ts";
 

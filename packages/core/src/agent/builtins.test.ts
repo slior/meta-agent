@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildLlmGenerateTool, LLM_GENERATE_NAME, seedBuiltins } from "./builtins.ts";
+import { buildLLMGenerateTool, LLM_GENERATE_NAME, seedBuiltins } from "./builtins.ts";
 import { FsToolRegistry } from "../registry/fs-registry.ts";
 import { SOURCE_LABEL, TOOL_CAPABILITY } from "../types.ts";
 
 test("llm_generate is atomic, declares llm capability, no net/env, taint-labeled", () => {
-  const t = buildLlmGenerateTool();
+  const t = buildLLMGenerateTool();
   assert.equal(t.manifest.name, LLM_GENERATE_NAME);
   assert.equal(t.manifest.kind, "atomic");
   assert.deepEqual(t.manifest.capabilities, [TOOL_CAPABILITY.llm]);
@@ -19,7 +19,7 @@ test("llm_generate is atomic, declares llm capability, no net/env, taint-labeled
 });
 
 test("buildLlmGenerateTool is deterministic", () => {
-  assert.equal(buildLlmGenerateTool().manifest.hash, buildLlmGenerateTool().manifest.hash);
+  assert.equal(buildLLMGenerateTool().manifest.hash, buildLLMGenerateTool().manifest.hash);
 });
 
 test("seedBuiltins registers llm_generate once with an always-approve record", async () => {
