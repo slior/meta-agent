@@ -244,4 +244,18 @@ Absolute paths are used as given. Point `apiKeyEnv` at a dedicated variable name
 
 ---
 
+## Terminal colors (CLI progress and debug)
+
+While the agent runs, the CLI prints **progress** lines to stderr (always on). With `--debug` or `META_AGENT_DEBUG=1`, **debug** blocks are also printed to stderr.
+
+- Progress lines use colors when the terminal supports them: dim metadata (time, event kind, tool name) and colored status text.
+- Tool approval prompts (Gate 1 and Gate 2/3) use dim labels and plain values; choice keys are color-coded: green `[a]` approve, cyan `[s]` session, red `[r]` reject (Gate 1 also has bold green `[A]` always-approve).
+- Sandbox diagnostic lines (when `META_AGENT_SANDBOX_DEBUG` is enabled, e.g. via project `--debug`) use a magenta `SANDBOX` badge, cyan message, and dim detail text.
+- Debug blocks use a distinct style: a `DEBUG` badge, indented payload, and a visible truncation note when the payload is large.
+- Colors respect `NO_COLOR` and non-TTY stderr (via `picocolors`). Set `FORCE_COLOR=1` to force colors when needed.
+- Progress timestamps come from trace events (`TraceEvent.ts`). Debug header timestamps are wall-clock capture time at print, not the underlying LLM event time.
+- Full LLM payloads remain in trace files; stderr debug output may truncate large JSON.
+
+---
+
 For a full copy-paste template that includes optional `"$schema"`, see [`config/meta-agent.example.json`](../config/meta-agent.example.json).

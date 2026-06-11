@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@meta-agent/core": "*",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "picocolors": "^1.1.1"
   }
 }

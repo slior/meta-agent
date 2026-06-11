@@ -4,10 +4,10 @@ export * from "./schemas.ts";
 export * from "./hash.ts";
 export * from "./errors.ts";
 export {
-  Tracer, TRACE_KIND_EXECUTION_DENIED, TRACE_KIND_FACTORY_REPAIR_LLM,
+  Tracer, TRACE_KIND_EXECUTION_DENIED, TRACE_KIND_FACTORY_GEN_DRAFT, TRACE_KIND_FACTORY_REPAIR_LLM,
   TRACE_KIND_LLM_CALL, TRACE_KIND_LLM_SYNTHESIS, TRACE_KIND_LLM_SYNTHESIS_START, TRACE_KIND_LLM_TURN,
-  TRACE_KIND_LLM_TURN_START, TRACE_KIND_TOOL_CALL, TRACE_KIND_TOOL_DISPATCH_START,
-  TRACE_KIND_TOOL_INVOKED, TRACE_KIND_WORKFLOW_START, TRACE_KIND_WORKFLOW_STEP_START,
+  TRACE_KIND_LLM_TURN_START, TRACE_KIND_TOOL_CALL, TRACE_KIND_TOOL_CREATED, TRACE_KIND_TOOL_DISPATCH_START,
+  TRACE_KIND_TOOL_INVOKED, TRACE_KIND_TOOL_REJECTED, TRACE_KIND_WORKFLOW_START, TRACE_KIND_WORKFLOW_STEP_START,
   TRACE_KIND_WORKFLOW_STEP_END, TRACE_KIND_WORKFLOW_END, LLM_TRACE_PHASE,
 } from "./tracer.ts";
 export type { TraceEvent, TracerObserver, TracerOptions, LlmTracePhase } from "./tracer.ts";
@@ -25,7 +25,12 @@ export { TracingLLMProvider } from "./llm/tracing-provider.ts";
 export { MockLLMProvider } from "./llm/mock-provider.ts";
 export type { Sandbox, InvokeToolHandler, ExecuteOpts } from "./sandbox/sandbox.ts";
 export { NodePermissionSandbox } from "./sandbox/node-permission-sandbox.ts";
-export { SANDBOX_DEBUG_ENV, sandboxDebugEnabled } from "./sandbox/sandbox-debug.ts";
+export {
+  SANDBOX_DEBUG_ENV,
+  sandboxDebugEnabled,
+  setSandboxDebugSink,
+} from "./sandbox/sandbox-debug.ts";
+export type { SandboxDebugSink } from "./sandbox/sandbox-debug.ts";
 export { staticValidateDraft, extractImports, extractInvokeToolCalls } from "./factory/static-validator.ts";
 export { ToolFactory } from "./factory/factory.ts";
 export type { PreviewWorkflowOutcome } from "./factory/factory.ts";

@@ -29,6 +29,15 @@ export const TRACE_KIND_EXECUTION_DENIED = "execution-denied" as const;
 /** Logged before structured-output repair in ToolFactory (CLI progress). */
 export const TRACE_KIND_FACTORY_REPAIR_LLM = "factory-repair-llm" as const;
 
+/** Logged when ToolFactory begins generating a new tool draft (CLI progress). */
+export const TRACE_KIND_FACTORY_GEN_DRAFT = "factory-gen-draft" as const;
+
+/** `TraceEvent.kind` when a new tool passed Gate 1 and was saved to the registry. */
+export const TRACE_KIND_TOOL_CREATED = "tool-created" as const;
+
+/** `TraceEvent.kind` when tool onboarding failed (static, smoke, or Gate 1 rejection). */
+export const TRACE_KIND_TOOL_REJECTED = "tool-rejected" as const;
+
 /** `TraceEvent.kind` carrying the full request/response of one host LLM call (content, not just usage). */
 export const TRACE_KIND_LLM_CALL = "llm-call" as const;
 

@@ -7,7 +7,14 @@ import { hashTool } from "../hash.ts";
 import { normalizePermissions } from "../permissions-normalize.ts";
 import { staticValidateDraft, type ValidationResult } from "./static-validator.ts";
 import { atomicPrompt, compositePrompt, repairPrompt, DRAFT_SCHEMA } from "./code-gen-prompts.ts";
-import { LLM_TRACE_PHASE, TRACE_KIND_FACTORY_REPAIR_LLM, type Tracer } from "../tracer.ts";
+import {
+  LLM_TRACE_PHASE,
+  TRACE_KIND_FACTORY_GEN_DRAFT,
+  TRACE_KIND_FACTORY_REPAIR_LLM,
+  TRACE_KIND_TOOL_CREATED,
+  TRACE_KIND_TOOL_REJECTED,
+  type Tracer,
+} from "../tracer.ts";
 import { liftFromTrace, inputSchemaFromInputs, type Invocation, type LiftResult, type LiteralFallback } from "../workflow/lift.ts";
 import { parameterize, type Promotion } from "../workflow/parameterize.ts";
 import { validate as validateWorkflow } from "../workflow/validator.ts";
@@ -205,7 +212,7 @@ export class ToolFactory {
     };
 
     await this.opts.registry.save(tool, approval);
-    this.opts.tracer.log("tool-created", { name: tool.manifest.name, hash: tool.manifest.hash, approvedBy: this.approvedBy });
+    this.opts.tracer.log(TRACE_KIND_TOOL_CREATED, { name: tool.manifest.name, hash: tool.manifest.hash, approvedBy: this.approvedBy });
     return { ok: true, tool, approval };
   }
 
@@ -229,7 +236,7 @@ export class ToolFactory {
       validation = staticValidateDraft(draft, { existingNames, tombstoned: this.opts.tombstoned });
     }
     if (!validation.ok) {
-      this.opts.tracer.log("tool-rejected", { name: draft.name, reason: `static: ${validation.errors.join("; ")}` });
+      this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, { name: draft.name, reason: `static: ${validation.errors.join("; ")}` });
       return { ok: false, reason: `static validation failed: ${validation.errors.join("; ")}` };
     }
 
@@ -246,7 +253,7 @@ export class ToolFactory {
         const retry = await this.smokeTest(this.draftToTool(draft), draft.smokeTestInput);
         if (retry.ok) { return this.presentAndSave(draft, retry); }
       }
-      this.opts.tracer.log("tool-rejected", { name: draft.name, reason: `smoke: ${smoke.error.message}` });
+      this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, { name: draft.name, reason: `smoke: ${smoke.error.message}` });
       return { ok: false, reason: `smoke test failed: ${smoke.error.message}` };
     }
 
@@ -293,7 +300,7 @@ export class ToolFactory {
   private async presentAndSave(draft: ToolDraft, smoke: ToolResult): Promise<FactoryOutcome> {
     const decision = await this.opts.approval.reviewDraft(draft, smoke);
     if (decision.decision === APPROVAL_DECISION.reject) {
-      this.opts.tracer.log("tool-rejected", { name: draft.name, reason: decision.reason });
+      this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, { name: draft.name, reason: decision.reason });
       return { ok: false, reason: decision.reason };
     }
     const finalDraft = decision.editedDraft ?? draft;
@@ -306,7 +313,7 @@ export class ToolFactory {
       ...(decision.notes !== undefined ? { notes: decision.notes } : {}),
     };
     await this.opts.registry.save(tool, approval);
-    this.opts.tracer.log("tool-created", { name: tool.manifest.name, hash: tool.manifest.hash, approvedBy: this.approvedBy });
+    this.opts.tracer.log(TRACE_KIND_TOOL_CREATED, { name: tool.manifest.name, hash: tool.manifest.hash, approvedBy: this.approvedBy });
     return { ok: true, tool, approval };
   }
 
@@ -347,7 +354,7 @@ export class ToolFactory {
    * @param systemPrompt LLM system prompt tailored for this draft.
    */
   private async genDraft(systemPrompt: string): Promise<ToolDraft> {
-    this.opts.tracer.log("factory-gen-draft", { phase: "start" });
+    this.opts.tracer.log(TRACE_KIND_FACTORY_GEN_DRAFT, { phase: "start" });
     return this.opts.llm.generateStructured<ToolDraft>({
       messages: [{ role: CHAT_ROLE.system, content: systemPrompt }],
       schemaName: "ToolDraft",
