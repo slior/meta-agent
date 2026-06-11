@@ -250,7 +250,9 @@ While the agent runs, the CLI prints **progress** lines to stderr (always on). W
 
 - Progress lines use colors when the terminal supports them: dim metadata (time, event kind, tool name) and colored status text.
 - Tool approval prompts (Gate 1 and Gate 2/3) use dim labels and plain values; choice keys are color-coded: green `[a]` approve, cyan `[s]` session, red `[r]` reject (Gate 1 also has bold green `[A]` always-approve).
-- Sandbox diagnostic lines (when `META_AGENT_SANDBOX_DEBUG` is enabled, e.g. via project `--debug`) use a magenta `SANDBOX` badge, cyan message, and dim detail text.
+- Gate 2/3 approval shows **Arguments** and **Permissions** as indented key-value tables (not raw JSON). Gate 1 uses the same human-readable permissions table.
+- Sandbox diagnostic lines (when `META_AGENT_SANDBOX_DEBUG` is enabled, e.g. via project `--debug`) use a magenta `SANDBOX` badge and cyan message; `key=value` details render as an indented Field/Value table. Free-text details (errors, long JSON) stay as indented plain text.
+- Trace JSONL files are unaffected — they continue to store raw JSON for args, permissions, and events.
 - Debug blocks use a distinct style: a `DEBUG` badge, indented payload, and a visible truncation note when the payload is large.
 - Colors respect `NO_COLOR` and non-TTY stderr (via `picocolors`). Set `FORCE_COLOR=1` to force colors when needed.
 - Progress timestamps come from trace events (`TraceEvent.ts`). Debug header timestamps are wall-clock capture time at print, not the underlying LLM event time.

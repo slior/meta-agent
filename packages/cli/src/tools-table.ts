@@ -1,4 +1,5 @@
 import { isBuiltinApproval, type ToolRegistry } from "@meta-agent/core";
+import { renderTable, truncateCell, type TableColumn } from "./terminal-table.ts";
 
 const TOOLS_COMMAND = {
   detailsArg: "details",
@@ -14,8 +15,6 @@ const SCHEMA_SUMMARY = {
   any: "any",
   object: "object",
 } as const;
-
-const TRUNCATE_ELLIPSIS = "...";
 
 const EMPTY_REGISTRY_MESSAGE = "No tools registered.";
 
@@ -34,17 +33,18 @@ const TABLE_COLUMNS = [
 ] as const;
 
 const DESCRIPTION_COLUMN_INDEX = 2;
-const TABLE_COL_WIDTHS = TABLE_COLUMNS.map((col) => col.width);
 const TABLE_HEADERS = TABLE_COLUMNS.map((col) => col.header);
 const DESCRIPTION_COL_WIDTH = TABLE_COLUMNS[DESCRIPTION_COLUMN_INDEX]!.width;
-
-const COL_GAP = "  ";
 
 const SCHEMA_PROPS_PREVIEW_LIMIT = 4;
 const SCHEMA_PROPS_OVERFLOW_SUFFIX = ", ...";
 const JSON_INDENT_SPACES = 4;
 
+/**
+ * Options for {@link formatToolsCatalog}.
+ */
 export type FormatToolsCatalogOpts = {
+  /** When true, append full schema JSON below the summary table. */
   details?: boolean;
 };
 
@@ -56,15 +56,29 @@ type ToolCatalogRow = {
   outputShape: Record<string, unknown>;
 };
 
+/**
+ * Result of parsing a `/tools` REPL command line.
+ */
 export type ParseToolsCommandResult =
   | { ok: true; details: boolean }
   | { ok: false; usage: string };
 
-/** True when line is /tools or /tools <args> — not /toolsfoo or /tools-json. */
+/**
+ * True when the line is `/tools` or `/tools <args>` — not `/toolsfoo` or `/tools-json`.
+ *
+ * @param line - Raw REPL input line.
+ * @returns Whether the line invokes the tools catalog command.
+ */
 export function isToolsCommand(line: string): boolean {
   return /^\/tools(\s|$)/.test(line.trim());
 }
 
+/**
+ * Parses `/tools` command arguments into a details flag or usage error.
+ *
+ * @param line - Raw REPL input line starting with `/tools`.
+ * @returns Parsed options or a usage string when arguments are invalid.
+ */
 export function parseToolsCommand(line: string): ParseToolsCommandResult {
   const args = line.trim().replace(/^\/tools/, "").trim().split(/\s+/).filter(Boolean);
   if (args.length === 0) return { ok: true, details: false };
@@ -72,9 +86,15 @@ export function parseToolsCommand(line: string): ParseToolsCommandResult {
   return { ok: false, usage: TOOLS_COMMAND.usage };
 }
 
+/**
+ * Truncates text for table cells; alias of {@link truncateCell}.
+ *
+ * @param text - Raw string to fit in a column.
+ * @param max - Maximum visible width.
+ * @returns Truncated text with ellipsis when needed.
+ */
 export function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return text.slice(0, max - TRUNCATE_ELLIPSIS.length) + TRUNCATE_ELLIPSIS;
+  return truncateCell(text, max);
 }
 
 function resolveSchemaType(schema: Record<string, unknown>): string {
@@ -106,6 +126,12 @@ function appendPropertiesSummary(parts: string[], schema: Record<string, unknown
   parts.push(`(props: ${shown.join(", ")}${suffix})`);
 }
 
+/**
+ * One-line summary of a JSON Schema object for the tools catalog table.
+ *
+ * @param schema - Tool input or output schema object.
+ * @returns Human-readable type and property/required summary.
+ */
 export function summarizeJsonSchema(schema: Record<string, unknown>): string {
   if (Object.keys(schema).length === 0) return SCHEMA_SUMMARY.any;
 
@@ -129,27 +155,19 @@ function indentJson(value: unknown, spaces: number): string {
     .join("\n");
 }
 
-function formatTableRow(cells: string[]): string {
-  return cells
-    .map((cell, i) => truncate(cell, TABLE_COL_WIDTHS[i]!).padEnd(TABLE_COL_WIDTHS[i]!))
-    .join(COL_GAP);
-}
-
+/**
+ * Renders a tools catalog table with fixed column widths.
+ *
+ * @param headers - Column header labels (defaults apply when shorter than column count).
+ * @param rows - Pre-formatted cell values per row.
+ * @returns Multi-line ASCII table string.
+ */
 export function renderTerminalTable(headers: string[], rows: string[][]): string {
-  const colCount = headers.length;
-  const lines: string[] = [];
-
-  lines.push(formatTableRow(headers));
-
-  const totalWidth =
-    TABLE_COL_WIDTHS.reduce((sum, w) => sum + w, 0) + COL_GAP.length * (colCount - 1);
-  lines.push("-".repeat(totalWidth));
-
-  for (const row of rows) {
-    lines.push(formatTableRow(row));
-  }
-
-  return lines.join("\n");
+  const columns: TableColumn[] = TABLE_COLUMNS.map((col, i) => ({
+    header: headers[i] ?? col.header,
+    width: col.width,
+  }));
+  return renderTable(columns, rows);
 }
 
 async function loadCatalogRows(registry: ToolRegistry): Promise<ToolCatalogRow[]> {
@@ -200,6 +218,13 @@ function formatToolDetails(row: ToolCatalogRow): string {
   return lines.join("\n");
 }
 
+/**
+ * Formats the registered tool catalog as a summary table, optionally with full schemas.
+ *
+ * @param registry - Tool registry to list.
+ * @param opts - When `details` is true, append per-tool schema blocks below the table.
+ * @returns Formatted catalog string or an empty-registry message.
+ */
 export async function formatToolsCatalog(
   registry: ToolRegistry,
   opts?: FormatToolsCatalogOpts,
@@ -221,6 +246,13 @@ export async function formatToolsCatalog(
   return output;
 }
 
+/**
+ * Handles a `/tools` REPL command and returns formatted catalog output.
+ *
+ * @param registry - Tool registry to list.
+ * @param line - Raw REPL input line.
+ * @returns Catalog text or usage message when parsing fails.
+ */
 export async function handleToolsCommand(registry: ToolRegistry, line: string): Promise<string> {
   const parsed = parseToolsCommand(line);
   if (!parsed.ok) return parsed.usage;

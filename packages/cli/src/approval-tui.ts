@@ -17,6 +17,7 @@ import {
   formatGate23Header,
   formatLabelValue,
 } from "./approval-format.ts";
+import { formatArgsTable, formatPermissionsTable } from "./approval-display.ts";
 import { theme } from "./terminal-theme.ts";
 
 /** Full-word Gate 1 reject answer (in addition to {@link APPROVAL_CHOICE_KEY.reject}). */
@@ -61,12 +62,7 @@ function printGate1Review(draft: ToolDraft, smokeTest: ToolResult): void {
   console.log(formatLabelValue("Rationale", draft.rationale));
   console.log(formatLabelValue("Input schema", JSON.stringify(draft.inputSchema)));
   console.log(formatLabelValue("Output shape", JSON.stringify(draft.outputShape)));
-  console.log(theme.meta("Permissions:"));
-  console.log(formatLabelValue("  fsRead", `[${draft.permissions.fsRead.join(", ")}]`));
-  console.log(formatLabelValue("  fsWrite", `[${draft.permissions.fsWrite.join(", ")}]`));
-  console.log(formatLabelValue("  net", draft.permissions.net));
-  console.log(formatLabelValue("  netAllowlist", `[${draft.permissions.netAllowlist.join(", ")}]`));
-  console.log(formatLabelValue("  env", `[${draft.permissions.env.join(", ")}]`));
+  console.log(formatPermissionsTable(draft.permissions));
   if (draft.dependencies.length) {
     console.log(formatLabelValue("Dependencies", draft.dependencies.join(", ")));
   }
@@ -122,8 +118,8 @@ export class CliApprovalPrompter implements ApprovalPrompter {
    */
   async promptGate23(tool: Tool, args: unknown, tier: RiskTier): Promise<ExecutionDecision> {
     console.log(formatGate23Header(tool.manifest.name, tier));
-    console.log(formatLabelValue("Args", JSON.stringify(args)));
-    console.log(formatLabelValue("Permissions", JSON.stringify(tool.manifest.permissions)));
+    console.log(formatArgsTable(args));
+    console.log(formatPermissionsTable(tool.manifest.permissions));
 
     const answer = (await this.rl.question(formatGate23ChoicePrompt())).trim();
     if (isRejectKey(answer)) {
