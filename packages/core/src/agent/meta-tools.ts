@@ -1,4 +1,4 @@
-import { CHAT_TOOL_TYPE, type ToolDef } from "../llm/interface.ts";
+import { CHAT_TOOL_TYPE, type ToolDef } from "../llm/LLMProvider.ts";
 
 /** LLM-visible names for meta-tool functions; must stay aligned with {@link META_TOOL_DEFS}. */
 export const META_FN = {

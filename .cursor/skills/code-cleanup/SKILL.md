@@ -3,9 +3,11 @@ name: code-cleanup
 description: >-
   Removes basic code smells in a focused pass—magic strings and numbers, duplicated
   protocol identifiers, repeated inline unions, and oversized control-flow blocks—by
-  introducing typed constants, named types, single sources of truth, and extracted methods.
+  introducing typed constants, named types, single sources of truth, extracted methods,
+  and JSDoc on exported types, functions, and classes.
   Use when cleaning up a file or module, reducing repetition, preparing a refactor, or when
-  the user mentions code smells, literals, constants, named types, or extracting methods.
+  the user mentions code smells, literals, constants, named types, extracting methods, or
+  export documentation.
 ---
 
 # Code cleanup (focused file pass)
@@ -47,8 +49,8 @@ Skip renaming for **domain prose** (user-visible copy, LLM prompts) unless the g
 **Named type aliases for repeated unions**
 
 - When an inline union is **duplicated** across functions in the same module (return type + argument, or several APIs sharing one notion), introduce **`export type Name = …`** colocated with those functions.
-- Add a one-line JSDoc if the name is not obvious (what it represents in the domain, e.g. “supported root JSON Schema `type` values”).
 - Use the named type on **every** relevant signature so refactors stay centralized; callers usually need no change if inference already matched.
+- Document new exported types in **step 5** (domain meaning, e.g. “supported root JSON Schema `type` values”).
 - Export from the package **`index`** only if external modules should reference the type; otherwise keep it module-local.
 
 ## 3. Extract methods without changing behavior
@@ -70,7 +72,38 @@ Name helpers by **intent** (`runOneAgentTurn`, `processOneToolCall`, `finalizeSo
 - **CLI / other packages**: update `switch` cases to use imported constants from the core package.
 - **Meta-tool / schema JSON**: property names like `"tool"` in `required` arrays are **field names**, not necessarily the same as meta-function names—do not blindly unify.
 
-## 5. Verify
+## 5. Document exports (JSDoc)
+
+Every **`export`** in the target file (and any new exports introduced during cleanup) must have a JSDoc block directly above it. Match project style: multi-line `/** … */`, summary sentence first, then tags.
+
+**Functions**
+
+- One-line summary of what the function does (domain intent, not implementation).
+- `@param name - …` for each parameter.
+- `@returns …` describing the return value (omit only when return type is `void`).
+
+**Types** (`export type`, interfaces, type aliases)
+
+- One-line summary of what the type represents in the domain.
+- For object types with non-obvious fields, add a property-level `/** … */` on the field or document key fields in the type block.
+- For discriminated unions, note what each variant means if not obvious from member names.
+
+**Classes**
+
+- Class-level JSDoc: role of the class and how callers use it.
+- JSDoc on each **public** method (and exported constructors) with `@param` / `@returns` as for functions.
+- Skip JSDoc on private helpers unless behavior is non-obvious.
+
+**Re-exports** (`export type { X }`, `export { X }`)
+
+- Document at the re-export site when the symbol is part of the module’s public API surface; otherwise rely on the source module’s docs.
+
+**Do not document**
+
+- Module-private functions, constants, and types unless the user asked or behavior is genuinely hard to read.
+- `@example` blocks unless the API is unusually subtle—prefer concise param/return descriptions.
+
+## 6. Verify
 
 - Run the project typecheck (`tsc`) for affected packages.
 - Fix imports; avoid circular dependency (constants live in a leaf module like `interface.ts` / `tracer.ts`, not in files that import heavy graphs unnecessarily).
@@ -80,6 +113,7 @@ Name helpers by **intent** (`runOneAgentTurn`, `processOneToolCall`, `finalizeSo
 - Dumping unrelated strings into one giant enum without ownership.
 - Exporting constants nobody imports—keep visibility minimal.
 - Extracting methods that only shuffle lines without clarifying data flow.
+- One-word or tag-only JSDoc (`/** foo */`) on exported APIs—use full blocks with `@param` / `@returns` where applicable.
 - Editing large docs or READMEs unless the user asked.
 
 ## Quick checklist
@@ -95,5 +129,6 @@ Code cleanup — target file: ___
 - [ ] Trace/event kinds → TRACE_KIND_* near Tracer, consumers updated
 - [ ] Fat blocks → helpers with explicit params + preserved side-effect order
 - [ ] Package index / cross-package imports updated
+- [ ] Exported types / functions / classes → JSDoc with @param / @returns
 - [ ] tsc clean for touched packages
 ```

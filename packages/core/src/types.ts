@@ -23,9 +23,27 @@ export type Limits = {
 export const TOOL_KIND = {
   atomic: "atomic",
   composite: "composite",
+  workflow: "workflow",
 } as const;
 
 export type ToolKind = (typeof TOOL_KIND)[keyof typeof TOOL_KIND];
+
+/** Mediated, host-serviced capabilities a tool may declare in its manifest. */
+export const TOOL_CAPABILITY = {
+  llm: "llm",
+} as const;
+
+export type ToolCapability = (typeof TOOL_CAPABILITY)[keyof typeof TOOL_CAPABILITY];
+
+/** The set of capability strings the host understands and is willing to service. */
+export const KNOWN_TOOL_CAPABILITIES: ReadonlySet<string> = new Set(Object.values(TOOL_CAPABILITY));
+
+/** Taint source labels a tool may declare in manifest `sourceLabels` (VERIFY). */
+export const SOURCE_LABEL = {
+  llmGenerated: "llm_generated",
+} as const;
+
+export type SourceLabel = (typeof SOURCE_LABEL)[keyof typeof SOURCE_LABEL];
 
 export type ToolManifest = {
   name: string;
@@ -39,6 +57,14 @@ export type ToolManifest = {
   hash: string;
   createdAt: string;
   kind: ToolKind;
+  /** Mediated host capabilities this tool may use (e.g. "llm"). Part of the hash. */
+  capabilities?: string[];
+  // Reserved for VERIFY spec (all optional, ignored in v1):
+  sourceLabels?: string[];        // taint labels this tool produces
+  sinkParams?: string[];          // parameter names that are taint sinks
+  preconditions?: string[];       // Z3-translatable expressions
+  postconditions?: string[];
+  frameConditions?: string[];
 };
 
 export type Tool = {

@@ -11,7 +11,7 @@ import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
-import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/interface.ts";
+import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/LLMProvider.ts";
 import { META_FN } from "./meta-tools.ts";
 import type { ApprovalRecord, Tool } from "../types.ts";
 
@@ -293,6 +293,240 @@ test("agent: empty find_tool injects recovery user before next chat", async () =
         m.content.includes(`${META_FN.findTool}_empty_recovery_hint`),
     );
     assert.equal(recoveryMsg?.content, EMPTY_FIND_RECOVERY_USER);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── workflow inputSchema validation tests ────────────────────────────────────
+
+const DOUBLE_HASH = "sha256:" + "d".repeat(64);
+const WF_HASH = "sha256:" + "w".repeat(64);
+
+const DOUBLE_TOOL_FOR_WF: Tool = {
+  manifest: {
+    name: "double",
+    description: "Doubles a number",
+    rationale: "Basic math",
+    inputSchema: { type: "object", properties: { n: { type: "number" } }, required: ["n"] },
+    outputShape: { type: "number" },
+    permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+    dependencies: [],
+    limits: { timeoutMs: 5000, maxOldSpaceSizeMb: 64 },
+    hash: DOUBLE_HASH,
+    createdAt: "2026-01-01T00:00:00Z",
+    kind: "atomic",
+  },
+  code: `export async function run(input) { return input.n * 2; }`,
+};
+
+const DOUBLE_APPROVAL_FOR_WF: ApprovalRecord = {
+  hash: DOUBLE_HASH,
+  approvedAt: "2026-01-01T00:00:00Z",
+  approvedBy: "test",
+  alwaysApprove: false,
+};
+
+const FETCH_AND_DOUBLE_TOOL: Tool = {
+  manifest: {
+    name: "fetch-and-double",
+    description: "Test workflow with required url parameter",
+    rationale: "test workflow",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string" } },
+      required: ["url"],
+      additionalProperties: false,
+    },
+    outputShape: { type: "number" },
+    permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+    dependencies: ["double"],
+    limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
+    hash: WF_HASH,
+    createdAt: "2026-01-01T00:00:00Z",
+    kind: "workflow",
+  },
+  code: JSON.stringify({
+    schemaVersion: 1,
+    name: "fetch-and-double",
+    description: "Test workflow",
+    goal: "test",
+    inputs: [{ name: "url", schema: { type: "string" }, required: true }],
+    steps: [
+      {
+        kind: "tool_call",
+        label: "step1",
+        tool: "double",
+        arguments: { n: { kind: "literal", value: 2 } },
+        resultBinding: "result",
+      },
+    ],
+    return: { source: { kind: "symref", ref: "result" } },
+  }),
+};
+
+const FETCH_AND_DOUBLE_APPROVAL: ApprovalRecord = {
+  hash: WF_HASH,
+  approvedAt: "2026-01-01T00:00:00Z",
+  approvedBy: "test",
+  alwaysApprove: false,
+};
+
+test("agent: workflow inputSchema — missing required field yields schema_violation", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
+    await registry.save(FETCH_AND_DOUBLE_TOOL, FETCH_AND_DOUBLE_APPROVAL);
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: {} } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    await loop.run("run the workflow without url");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const toolMsg = secondReq.messages.find((m) => m.role === CHAT_ROLE.tool);
+    assert.ok(toolMsg, "expected a tool message in the second chat call");
+    const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.kind, "schema_violation");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: workflow inputSchema — unknown key rejected when additionalProperties:false", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
+    await registry.save(FETCH_AND_DOUBLE_TOOL, FETCH_AND_DOUBLE_APPROVAL);
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com", extra: "bad" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    await loop.run("run the workflow with extra key");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const toolMsg = secondReq.messages.find((m) => m.role === CHAT_ROLE.tool);
+    assert.ok(toolMsg, "expected a tool message in the second chat call");
+    const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.kind, "schema_violation");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: workflow inputSchema — valid input dispatches to executor successfully", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
+    await registry.save(FETCH_AND_DOUBLE_TOOL, FETCH_AND_DOUBLE_APPROVAL);
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    await loop.run("run the workflow with valid url");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const toolMsg = secondReq.messages.find((m) => m.role === CHAT_ROLE.tool);
+    assert.ok(toolMsg, "expected a tool message in the second chat call");
+    const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
+    assert.equal(parsed.ok, true, `expected ok:true but got: ${JSON.stringify(parsed)}`);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+const CLOSED_WF_HASH = "sha256:" + "c".repeat(64);
+
+const CLOSED_WF_TOOL: Tool = {
+  manifest: {
+    name: "closed-workflow",
+    description: "Test workflow with no declared parameters",
+    rationale: "test closed workflow",
+    inputSchema: {},
+    outputShape: { type: "number" },
+    permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+    dependencies: ["double"],
+    limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
+    hash: CLOSED_WF_HASH,
+    createdAt: "2026-01-01T00:00:00Z",
+    kind: "workflow",
+  },
+  code: JSON.stringify({
+    schemaVersion: 1,
+    name: "closed-workflow",
+    description: "Test closed workflow",
+    goal: "test",
+    inputs: [],
+    steps: [
+      {
+        kind: "tool_call",
+        label: "step1",
+        tool: "double",
+        arguments: { n: { kind: "literal", value: 3 } },
+        resultBinding: "result",
+      },
+    ],
+    return: { source: { kind: "symref", ref: "result" } },
+  }),
+};
+
+const CLOSED_WF_APPROVAL: ApprovalRecord = {
+  hash: CLOSED_WF_HASH,
+  approvedAt: "2026-01-01T00:00:00Z",
+  approvedBy: "test",
+  alwaysApprove: false,
+};
+
+test("agent: workflow inputSchema — closed workflow (inputSchema: {}) accepts any input", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
+    await registry.save(CLOSED_WF_TOOL, CLOSED_WF_APPROVAL);
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "closed-workflow", args: { url: "https://x" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
+    await loop.run("run the closed workflow with extra args");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const toolMsg = secondReq.messages.find((m) => m.role === CHAT_ROLE.tool);
+    assert.ok(toolMsg, "expected a tool message in the second chat call");
+    const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
+    assert.equal(parsed.ok, true, `expected ok:true but got: ${JSON.stringify(parsed)}`);
     await tracer.close();
   } finally {
     await rm(dir, { recursive: true, force: true });

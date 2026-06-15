@@ -96,3 +96,24 @@ test("sandbox enforces depth cap on invokeTool recursion", async () => {
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.error.kind, "depth_exceeded");
 });
+
+const LLM_FIXTURE = join(FIXTURES, "llm-tool.ts");
+
+test("sandbox routes llm frame to onLLM handler", async () => {
+  const sb = new NodePermissionSandbox({ workspace: FIXTURES });
+  const tool = mkTool("llm", { fsRead: [FIXTURES] });
+  const r = await sb.execute(tool, { instructions: "go", input: 1 }, "token", {
+    toolPath: LLM_FIXTURE,
+    onLLM: async (req) => ({ ok: true, value: `ok:${req.instructions}` }),
+  });
+  assert.equal(r.ok, true);
+  if (r.ok) assert.equal(r.value, "ok:go");
+});
+
+test("sandbox denies llm capability when no onLLM handler is wired", async () => {
+  const sb = new NodePermissionSandbox({ workspace: FIXTURES });
+  const tool = mkTool("llm", { fsRead: [FIXTURES] });
+  const r = await sb.execute(tool, { instructions: "go" }, "token", { toolPath: LLM_FIXTURE });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.kind, "permission_denied");
+});

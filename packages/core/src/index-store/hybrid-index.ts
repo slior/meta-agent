@@ -1,6 +1,6 @@
 import { FIND_TOOL_TOP_K } from "../agent/meta-tools.ts";
 import type { CatalogEntry, FindResult, ToolSummary } from "../types.ts";
-import type { ToolRegistry } from "../registry/interface.ts";
+import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ToolIndex } from "./interface.ts";
 
 const TOKEN_RE = /[a-z0-9]+/gi;

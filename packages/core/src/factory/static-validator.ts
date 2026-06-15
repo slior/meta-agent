@@ -220,6 +220,27 @@ function validateInvokeToolConsistency(draft: ToolDraft, ctx: ValidationContext,
   }
 }
 
+
+/**
+ * Validates that the given tool draft does not declare any privileged capabilities.
+ *
+ * Only built-in tools are allowed to declare special capabilities (e.g., privileged or mediated operations);
+ * user-authored (drafted) tools must not specify a `capabilities` field.
+ * If the draft defines a non-empty `capabilities` array, this function adds a validation error to the errs array.
+ *
+ * @param draft - The ToolDraft object being validated.
+ * @param errs - Array to append error messages to if validation fails.
+ */
+function validateNoPrivilegedCapabilities(draft: ToolDraft, errs: string[]): void {
+  const caps = (draft as unknown as Record<string, unknown>).capabilities;
+  if (Array.isArray(caps) && caps.length > 0) {
+    errs.push(
+      `capabilities may not be declared by authored tools (got ${JSON.stringify(caps)}); ` +
+      "privileged capabilities are reserved for built-ins",
+    );
+  }
+}
+
 /**
  * Performs static validation on a tool draft before it is accepted or approved.
  * This function checks the following aspects of the draft:
@@ -243,6 +264,7 @@ export function staticValidateDraft(draft: ToolDraft, ctx: ValidationContext): V
   validateToolIdentity(draft, ctx, errs);
   validateEvalInCode(draft, errs);
   validatePermissionsBlock(draft.permissions, errs);
+  validateNoPrivilegedCapabilities(draft, errs);
   validateImportsAgainstPermissions(draft, errs);
   validateInvokeToolConsistency(draft, ctx, errs);
 

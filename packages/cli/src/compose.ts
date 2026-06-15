@@ -1,7 +1,21 @@
-import type { ToolFactory } from "@meta-agent/core";
+import type { ToolFactory, Promotion } from "@meta-agent/core";
 import type { ReadlinePromisesInterface } from "./approval-tui.ts";
 
-export type InvocationRecord = { name: string; args: unknown; ok: boolean };
+/**
+ * Represents a single invocation of a tool during a session.
+ * @property name - The name of the tool invoked.
+ * @property args - The arguments passed to the tool.
+ * @property ok - Whether the invocation was successful.
+ * @property value - (Optional) The resulting value from the tool invocation if successful.
+ * @property binding - (Optional) A variable binding associated with the result, if any.
+ */
+export type InvocationRecord = {
+  name: string;
+  args: unknown;
+  ok: boolean;
+  value?: unknown;
+  binding?: string;
+};
 
 export async function runComposeInteraction(
   factory: ToolFactory,
@@ -14,7 +28,8 @@ export async function runComposeInteraction(
   }
   console.log("\nTool calls in this session:");
   invocations.forEach((inv, i) => {
-    console.log(`  [${i + 1}] ${inv.name}(${JSON.stringify(inv.args)}) → ${inv.ok ? "ok" : "err"}`);
+    const valueStr = inv.ok && inv.value !== undefined ? `→ ${JSON.stringify(inv.value).slice(0, 60)}` : "";
+    console.log(`  [${i + 1}] ${inv.name}(${JSON.stringify(inv.args)}) ${inv.ok ? "ok" : "err"} ${valueStr}`);
   });
   const range = (await rl.question("Select a contiguous slice as 'a-b' (or blank to cancel): ")).trim();
   if (!range) return;
@@ -23,10 +38,39 @@ export async function runComposeInteraction(
   const a = parseInt(m[1]!, 10), b = parseInt(m[2]!, 10);
   if (a < 1 || b > invocations.length || a > b) { console.log("out of bounds"); return; }
   const slice = invocations.slice(a - 1, b);
-  const name = (await rl.question("Name for the new composite: ")).trim();
+  const name = (await rl.question("Name for the new workflow: ")).trim();
   if (!name) { console.log("cancelled"); return; }
   const intent = (await rl.question("Intent (1-2 sentences): ")).trim();
-  const sliceDescription = slice.map((s, i) => `${i + 1}. ${s.name}(${JSON.stringify(s.args)})`).join("\n");
-  const out = await factory.createReactive({ name, intent, sliceDescription });
-  console.log(out.ok ? `created composite '${out.tool.manifest.name}'` : `rejected: ${out.reason}`);
+  const description = (await rl.question("Description: ")).trim();
+
+  const liftSlice = slice.map((s) => ({ name: s.name, args: s.args, ok: s.ok, value: s.value ?? null, ...(s.binding !== undefined ? { binding: s.binding } : {}) }));
+
+  const preview = await factory.previewWorkflow({ slice: liftSlice, name, intent, description });
+  if (!preview.ok) { console.log(`rejected: ${preview.reason}`); return; }
+
+  const promotions: Promotion[] = [];
+  if (preview.literalFallbacks.length === 0) {
+    console.log("(no literal arguments to parameterize)");
+  } else {
+    console.log("\nParameterize literal arguments (blank name = keep literal):");
+    for (const fb of preview.literalFallbacks) {
+      const preview1 = fb.canonicalValue.length > 80 ? fb.canonicalValue.slice(0, 80) + "..." : fb.canonicalValue;
+      console.log(`  ${fb.stepLabel}.${fb.argName} = ${preview1}`);
+      const paramName = (await rl.question("    Parameter name: ")).trim();
+      if (!paramName) continue;
+      const reqAns = (await rl.question("    Required? [y/N]: ")).trim().toLowerCase();
+      const required = reqAns === "y" || reqAns === "yes";
+      const desc = (await rl.question("    Description (optional): ")).trim();
+      promotions.push({
+        stepLabel: fb.stepLabel,
+        argName: fb.argName,
+        paramName,
+        required,
+        ...(desc ? { description: desc } : {}),
+      });
+    }
+  }
+
+  const out = await factory.createWorkflow({ slice: liftSlice, name, intent, description, promotions });
+  console.log(out.ok ? `created workflow '${out.tool.manifest.name}'` : `rejected: ${out.reason}`);
 }

@@ -164,3 +164,17 @@ test("atomic tool must not contain invokeTool calls", () => {
   }), { existingNames: new Set(["x"]), tombstoned: new Set() });
   assert.equal(r.ok, false);
 });
+
+test("authored drafts may not declare capabilities", () => {
+  const r = staticValidateDraft(
+    draft({ capabilities: ["llm"] } as Partial<ToolDraft>),
+    { existingNames: new Set(), tombstoned: new Set() },
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => /capabilities/.test(e)));
+});
+
+test("normal authored draft still validates", () => {
+  const r = staticValidateDraft(draft(), { existingNames: new Set(), tombstoned: new Set() });
+  assert.equal(r.ok, true);
+});

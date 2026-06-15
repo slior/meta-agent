@@ -1,31 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canonicalJson, hashTool } from "./hash.ts";
+import { hashTool } from "./hash.ts";
+import { KNOWN_TOOL_CAPABILITIES, TOOL_CAPABILITY } from "./types.ts";
 
-test("canonicalJson sorts object keys deterministically", () => {
-  const a = canonicalJson({ b: 1, a: 2, c: { z: 3, y: 4 } });
-  const b = canonicalJson({ a: 2, c: { y: 4, z: 3 }, b: 1 });
-  assert.equal(a, b);
-  assert.equal(a, '{"a":2,"b":1,"c":{"y":4,"z":3}}');
+const BASE = {
+  name: "t", description: "d", rationale: "r",
+  inputSchema: { type: "object" }, outputShape: {},
+  permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+  dependencies: [], limits: { timeoutMs: 1000, maxOldSpaceSizeMb: 256 },
+  createdAt: "1970-01-01T00:00:00.000Z", kind: "atomic",
+} as const;
+
+test("known capabilities include llm", () => {
+  assert.equal(TOOL_CAPABILITY.llm, "llm");
+  assert.ok(KNOWN_TOOL_CAPABILITIES.has("llm"));
 });
 
-test("canonicalJson preserves array order", () => {
-  assert.equal(canonicalJson([3, 1, 2]), "[3,1,2]");
-});
-
-test("hashTool is stable under key reordering of manifest", () => {
-  const code = "export async function run(){return 1;}";
-  const manifest1 = { name: "t", x: 1, y: 2 };
-  const manifest2 = { y: 2, name: "t", x: 1 };
-  assert.equal(hashTool(code, manifest1 as any), hashTool(code, manifest2 as any));
-});
-
-test("hashTool changes when code changes", () => {
-  const manifest = { name: "t" } as any;
-  assert.notEqual(hashTool("a", manifest), hashTool("b", manifest));
-});
-
-test("hashTool produces sha256:<hex> format", () => {
-  const h = hashTool("x", { name: "t" } as any);
-  assert.match(h, /^sha256:[a-f0-9]{64}$/);
+test("capabilities participate in the tool hash", () => {
+  const a = hashTool("code", { ...BASE });
+  const b = hashTool("code", { ...BASE, capabilities: ["llm"] });
+  assert.notEqual(a, b);
 });

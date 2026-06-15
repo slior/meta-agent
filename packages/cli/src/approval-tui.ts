@@ -9,49 +9,126 @@ import {
   type ToolDraft,
   type ToolResult,
 } from "@meta-agent/core";
+import {
+  APPROVAL_CHOICE_KEY,
+  formatGate1ChoicePrompt,
+  formatGate1Header,
+  formatGate23ChoicePrompt,
+  formatGate23Header,
+  formatLabelValue,
+} from "./approval-format.ts";
+import { formatArgsTable, formatPermissionsTable } from "./approval-display.ts";
+import { theme } from "./terminal-theme.ts";
 
+/** Full-word Gate 1 reject answer (in addition to {@link APPROVAL_CHOICE_KEY.reject}). */
+const GATE1_REJECT_ANSWER = "reject";
+
+/** Full-word Gate 1 always-approve answer (in addition to {@link APPROVAL_CHOICE_KEY.alwaysApprove}). */
+const GATE1_ALWAYS_APPROVE_ANSWER = "always-approve";
+
+const GATE1_DEFAULT_REJECT_REASON = "rejected";
+const GATE23_REJECT_REASON = "user rejected";
+
+function isRejectKey(answer: string): boolean {
+  const trimmed = answer.trim();
+  const { reject } = APPROVAL_CHOICE_KEY;
+  return trimmed === reject || trimmed === reject.toUpperCase();
+}
+
+function isGate1RejectAnswer(answer: string): boolean {
+  return isRejectKey(answer) || answer.trim() === GATE1_REJECT_ANSWER;
+}
+
+function isAlwaysApproveAnswer(answer: string): boolean {
+  const trimmed = answer.trim();
+  return trimmed === APPROVAL_CHOICE_KEY.alwaysApprove || trimmed === GATE1_ALWAYS_APPROVE_ANSWER;
+}
+
+function isSessionApproveAnswer(answer: string): boolean {
+  const trimmed = answer.trim();
+  const { sessionApprove } = APPROVAL_CHOICE_KEY;
+  return trimmed === sessionApprove || trimmed === sessionApprove.toUpperCase();
+}
+
+function randomApprovalToken(): string {
+  return Math.random().toString(36).slice(2);
+}
+
+function printGate1Review(draft: ToolDraft, smokeTest: ToolResult): void {
+  console.log(formatGate1Header());
+  console.log(formatLabelValue("Name", draft.name));
+  console.log(formatLabelValue("Kind", draft.kind));
+  console.log(formatLabelValue("Description", draft.description));
+  console.log(formatLabelValue("Rationale", draft.rationale));
+  console.log(formatLabelValue("Input schema", JSON.stringify(draft.inputSchema)));
+  console.log(formatLabelValue("Output shape", JSON.stringify(draft.outputShape)));
+  console.log(formatPermissionsTable(draft.permissions));
+  if (draft.dependencies.length) {
+    console.log(formatLabelValue("Dependencies", draft.dependencies.join(", ")));
+  }
+  console.log(theme.meta("\n--- CODE ---"));
+  console.log(theme.progressBody(draft.code));
+  console.log(theme.meta("--- /CODE ---"));
+  console.log(formatLabelValue("\nSmoke test input", JSON.stringify(draft.smokeTestInput)));
+  console.log(formatLabelValue("Smoke test result", JSON.stringify(smokeTest)));
+}
+
+/**
+ * Re-export of Node's readline promises interface for typing CLI wiring (`repl`, `compose`).
+ */
 export type { ReadlinePromisesInterface };
 
+/**
+ * Terminal {@link ApprovalPrompter} that renders Gate 1 and Gate 2/3 prompts via readline.
+ */
 export class CliApprovalPrompter implements ApprovalPrompter {
+  /**
+   * @param rl - Readline interface used for colored prompts and user input.
+   */
   constructor(private readonly rl: ReadlinePromisesInterface) {}
 
+  /**
+   * Shows a new-tool draft review and collects Gate 1 approval.
+   *
+   * @param draft - Proposed tool manifest and source from the factory.
+   * @param smokeTest - Result of the factory smoke test shown in the review.
+   * @returns Approve (optionally always-approve) or reject with reason.
+   */
   async promptGate1(draft: ToolDraft, smokeTest: ToolResult): Promise<Gate1Decision> {
-    console.log("\n=== GATE 1: Review new tool ===");
-    console.log(`Name:         ${draft.name}`);
-    console.log(`Kind:         ${draft.kind}`);
-    console.log(`Description:  ${draft.description}`);
-    console.log(`Rationale:    ${draft.rationale}`);
-    console.log("Input schema: " + JSON.stringify(draft.inputSchema));
-    console.log("Output shape: " + JSON.stringify(draft.outputShape));
-    console.log("Permissions:");
-    console.log(`  fsRead:       [${draft.permissions.fsRead.join(", ")}]`);
-    console.log(`  fsWrite:      [${draft.permissions.fsWrite.join(", ")}]`);
-    console.log(`  net:          ${draft.permissions.net}`);
-    console.log(`  netAllowlist: [${draft.permissions.netAllowlist.join(", ")}]`);
-    console.log(`  env:          [${draft.permissions.env.join(", ")}]`);
-    if (draft.dependencies.length) console.log(`Dependencies: ${draft.dependencies.join(", ")}`);
-    console.log("\n--- CODE ---");
-    console.log(draft.code);
-    console.log("--- /CODE ---");
-    console.log("\nSmoke test input:  " + JSON.stringify(draft.smokeTestInput));
-    console.log("Smoke test result: " + JSON.stringify(smokeTest));
+    printGate1Review(draft, smokeTest);
 
-    const answer = (await this.rl.question("\n[a]pprove / [A]lways-approve / [r]eject? ")).trim();
-    if (answer === "r" || answer === "R" || answer === "reject") {
-      const reason = (await this.rl.question("Reason: ")).trim() || "rejected";
+    const answer = (await this.rl.question(formatGate1ChoicePrompt())).trim();
+    if (isGate1RejectAnswer(answer)) {
+      const reason = (await this.rl.question(theme.meta("Reason: "))).trim() || GATE1_DEFAULT_REJECT_REASON;
       return { decision: APPROVAL_DECISION.reject, reason };
     }
-    const always = answer === "A" || answer === "always-approve";
-    return { decision: APPROVAL_DECISION.approve, alwaysApprove: always };
+    return {
+      decision: APPROVAL_DECISION.approve,
+      alwaysApprove: isAlwaysApproveAnswer(answer),
+    };
   }
 
+  /**
+   * Shows tool execution details and collects Gate 2/3 approval.
+   *
+   * @param tool - Registered tool whose invocation is awaiting approval.
+   * @param args - Serialized invocation arguments shown to the reviewer.
+   * @param tier - Assessed risk tier for this execution.
+   * @returns Approve (with session cache flag and token) or reject.
+   */
   async promptGate23(tool: Tool, args: unknown, tier: RiskTier): Promise<ExecutionDecision> {
-    console.log(`\n=== GATE 2/3: ${tool.manifest.name} (risk: ${tier}) ===`);
-    console.log(`Args: ${JSON.stringify(args)}`);
-    console.log(`Permissions: ${JSON.stringify(tool.manifest.permissions)}`);
-    const answer = (await this.rl.question("[a]pprove-once / [s]ession-approve / [r]eject? ")).trim();
-    if (answer === "r" || answer === "R") return { decision: APPROVAL_DECISION.reject, reason: "user rejected" };
-    const cache = answer === "s" || answer === "S";
-    return { decision: APPROVAL_DECISION.approve, token: Math.random().toString(36).slice(2), cacheForSession: cache };
+    console.log(formatGate23Header(tool.manifest.name, tier));
+    console.log(formatArgsTable(args));
+    console.log(formatPermissionsTable(tool.manifest.permissions));
+
+    const answer = (await this.rl.question(formatGate23ChoicePrompt())).trim();
+    if (isRejectKey(answer)) {
+      return { decision: APPROVAL_DECISION.reject, reason: GATE23_REJECT_REASON };
+    }
+    return {
+      decision: APPROVAL_DECISION.approve,
+      token: randomApprovalToken(),
+      cacheForSession: isSessionApproveAnswer(answer),
+    };
   }
 }

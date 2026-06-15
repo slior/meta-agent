@@ -8,27 +8,30 @@ import {
   type LLMProvider,
   type ToolCall,
   type ToolDef,
-} from "../llm/interface.ts";
-import type { Sandbox } from "../sandbox/interface.ts";
-import type { ToolRegistry } from "../registry/interface.ts";
+} from "../llm/LLMProvider.ts";
+import type { LlmCapabilityRequest, Sandbox } from "../sandbox/sandbox.ts";
+import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
-import type { ToolResult } from "../types.ts";
+import { TOOL_CAPABILITY, TOOL_KIND, type ToolResult } from "../types.ts";
 import {
   TRACE_KIND_EXECUTION_DENIED,
   TRACE_KIND_LLM_SYNTHESIS,
   TRACE_KIND_LLM_SYNTHESIS_START,
   TRACE_KIND_LLM_TURN,
   TRACE_KIND_LLM_TURN_START,
+  LLM_TRACE_PHASE,
   TRACE_KIND_TOOL_CALL,
   TRACE_KIND_TOOL_DISPATCH_START,
   TRACE_KIND_TOOL_INVOKED,
   type Tracer,
 } from "../tracer.ts";
+import { ResultStore, describeForModel, resolveRefs, sanitizeBinding } from "./result-store.ts";
 import { coerceStringifiedJsonInput, rootJsonSchemaKind } from "./coerce-tool-input.ts";
 import { renderSystemPrompt } from "./system-prompt.ts";
 import { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./meta-tools.ts";
 import { ToolFactory } from "../factory/factory.ts";
 import { toolError } from "../errors.ts";
+import { WorkflowExecutor } from "../workflow/executor.ts";
 
 /** Default maximum LLM turns when {@link AgentLoopOpts.maxTurns} is omitted. */
 const DEFAULT_MAX_TURNS = 20;
@@ -38,6 +41,17 @@ const CATALOG_DESCRIPTION_PREVIEW_MAX = 80;
 
 /** Default stop reason string when the model omits or sends blank `reason`. */
 const DEFAULT_SOLO_STOP_REASON = "stopped";
+
+/** System prompt for the mediated llm_generate capability: the model is a pure data transformer. */
+const LLM_GENERATE_SYSTEM =
+  "You transform the given INPUT according to the INSTRUCTIONS and return only the result. " +
+  "Do not ask questions, do not call tools, do not add commentary.";
+
+/** Renders the user message for an llm capability request. */
+function renderLlmInstruction(instructions: string, input: unknown): string {
+  const rendered = typeof input === "string" ? input : JSON.stringify(input, null, 2);
+  return `${instructions}\n\n--- INPUT ---\n${rendered}`;
+}
 
 const FINAL_SYNTHESIS_SYSTEM = `You are the final answer step for a meta-agent. The conversation above includes the user's request and tool results (JSON in assistant/tool messages).
 Write a concise reply for the user in plain language. Use concrete numbers, paths, and facts from tool results when present. Do not call tools or invent data not supported by the transcript.`;
@@ -54,7 +68,24 @@ export const EMPTY_FIND_RECOVERY_USER =
   `That means no registry tool matched — it is not an error. Next use ${META_FN.proposeNewTool} or ${META_FN.proposeCompositeTool}, or ${META_FN.listTools} if you need the full catalog; you may try ${META_FN.findTool} again with a sharper query. ` +
   "Do not answer with only prose unless you have genuinely exhausted these options.";
 
-export type ToolInvokedEvent = { name: string; args: unknown; ok: boolean; durationMs: number };
+/**
+ * Represents a record of a tool invocation, including its arguments, outcome, and metadata.
+ *
+ * @property name - The name of the tool that was invoked.
+ * @property args - The input arguments provided to the tool.
+ * @property ok - Whether the invocation was successful (true) or resulted in an error (false).
+ * @property durationMs - The time taken in milliseconds to complete the tool invocation.
+ * @property value - (Optional) The returned value from the tool if the invocation was successful.
+ * @property binding - (Optional) A variable binding name associated with the result for reference by the agent.
+ */
+export type ToolInvokedEvent = {
+  name: string;
+  args: unknown;
+  ok: boolean;
+  durationMs: number;
+  value?: unknown;
+  binding?: string;
+};
 
 /**
  * Options for constructing an {@link AgentLoop}.
@@ -116,6 +147,11 @@ export class AgentLoop {
   private readonly maxTurns: number;
   /** Relaxed-constraint Ajv instance for validating tool input schemas. */
   private readonly ajv = new Ajv({ strict: false });
+  /** In-process executor for workflow-kind tools. */
+  private readonly executor: WorkflowExecutor;
+  private readonly resultStore = new ResultStore();
+  private invocationSeq = 0;
+  private lastDepth0Binding: string | null = null;
 
   /**
    * Constructs an AgentLoop, binding its dependencies and policies.
@@ -124,6 +160,7 @@ export class AgentLoop {
   constructor(opts: AgentLoopOpts) {
     this.opts = opts;
     this.maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
+    this.executor = new WorkflowExecutor({ tracer: opts.tracer });
   }
 
   /**
@@ -158,6 +195,7 @@ export class AgentLoop {
     const resp = await this.opts.llm.chat({
       messages: [{ role: CHAT_ROLE.system, content: system }, ...messages],
       tools,
+      traceTag: LLM_TRACE_PHASE.orchestration,
     });
     this.opts.tracer.log(TRACE_KIND_LLM_TURN, { turn, usage: resp.usage ?? null });
     messages.push(resp.message);
@@ -219,9 +257,26 @@ export class AgentLoop {
     messages.push({
       role: CHAT_ROLE.tool,
       tool_call_id: call.id,
-      content: JSON.stringify(result),
+      content: (() => {
+        const isInvoke = call.function.name === META_FN.invokeTool;
+        const elided =
+          isInvoke && result.ok && this.lastDepth0Binding !== null
+            ? JSON.stringify(describeForModel(result.ok ? result.value : null, this.lastDepth0Binding))
+            : JSON.stringify(result);
+        this.lastDepth0Binding = null;
+        return elided;
+      })(),
     });
     return { done: false, invokeFailed, emptyFind };
+  }
+
+  /** Stores a successful depth-0 tool result under a fresh binding and remembers it for elision. */
+  private storeDepth0Result(name: string, result: ToolResult): string | null {
+    if (!result.ok) { this.lastDepth0Binding = null; return null; }
+    const binding = `r_${this.invocationSeq++}_${sanitizeBinding(name)}`;
+    this.resultStore.put(binding, result.value);
+    this.lastDepth0Binding = binding;
+    return binding;
   }
 
   /**
@@ -264,6 +319,7 @@ export class AgentLoop {
     const syn = await this.opts.llm.chat({
       messages: [{ role: CHAT_ROLE.system, content: FINAL_SYNTHESIS_SYSTEM }, ...messages],
       toolChoice: CHAT_TOOL_CHOICE.none,
+      traceTag: LLM_TRACE_PHASE.synthesis,
     });
     this.opts.tracer.log(TRACE_KIND_LLM_SYNTHESIS, { usage: syn.usage ?? null });
 
@@ -371,9 +427,41 @@ export class AgentLoop {
     }
   }
 
+ 
   /**
-   * Handles invocation of a non-meta-tool ("user" or composite tools).
-   * Validates input, requests approval, invokes the tool in sandbox, and records invocation/trace.
+   * Handles a mediated LLM (large language model) capability request from a tool executing in the sandbox.
+   *
+   * This function is used as a host-provided capability, allowing sandboxed tools—such as the built-in
+   * `llm_generate`—to securely interact with the LLM provider using structured requests (instructions,
+   * input data, and optional output schema). It constructs a prompt with a strict system message and
+   * a formatted user input, and routes the call to the configured LLM provider. Depending on whether
+   * an output schema is specified, it will request either a structured response or an unstructured string.
+   * Any provider or runtime errors are caught and returned as tool errors.
+   *
+   * @param req - The LLM capability request, specifying instructions, input data, and optional schema.
+   * @returns A ToolResult containing the LLM's output or an error if the operation fails.
+   */
+  private async runLlmCapability(req: LlmCapabilityRequest): Promise<ToolResult> {
+    const messages: ChatMessage[] = [
+      { role: CHAT_ROLE.system, content: LLM_GENERATE_SYSTEM },
+      { role: CHAT_ROLE.user, content: renderLlmInstruction(req.instructions, req.input) },
+    ];
+    try {
+      if (req.schema) {
+        const value = await this.opts.llm.generateStructured({ messages, schemaName: "llm_generate", schema: req.schema, traceTag: LLM_TRACE_PHASE.capability });
+        return { ok: true, value };
+      } else {
+        const resp = await this.opts.llm.chat({ messages, traceTag: LLM_TRACE_PHASE.capability });
+        return { ok: true, value: resp.message.content ?? "" };
+      }
+    } catch (e) {
+      return toolError("runtime_error", `llm capability failed: ${(e as Error).message}`);
+    }
+  }
+
+   /**
+   * Handles invocation of a non-meta-tool ("user", composite, or workflow tools).
+   * Validates input, requests approval, invokes the tool in sandbox (or executor for workflows), and records invocation/trace.
    * Updates state for allowed tool invocations.
    * @param name The name of the tool to invoke.
    * @param args Tool input arguments (parsed).
@@ -385,8 +473,35 @@ export class AgentLoop {
     const tool = await this.opts.registry.get(name);
     if (!tool) return toolError("unknown_tool", `no tool named '${name}'`);
 
+    // At the agent boundary (depth 0), arguments may carry { $ref } sentinels pointing at prior
+    // results the agent never saw in full. Resolve them to concrete values before validation/execution;
+    // keep the unresolved form (`recordArgs`) for lift.
+    const recordArgs = args;
+    let effectiveArgs = args;
+    if (depth === 0) {
+      const resolved = resolveRefs(args, this.resultStore);
+      if (!resolved.ok) return toolError("schema_violation", resolved.error);
+      effectiveArgs = resolved.value;
+    }
+
+    // Workflow tools run in-process via WorkflowExecutor
+    if (tool.manifest.kind === TOOL_KIND.workflow) {
+      const wf = await this.opts.registry.getWorkflow(name);
+      if (!wf) return toolError("unknown_tool", `workflow '${name}' not found`);
+      const schema = tool.manifest.inputSchema as Record<string, unknown>;
+      const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
+      if (!this.ajv.validate(schema, input)) {
+        return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
+      }
+      const result = await this.executor.run(wf, input as Record<string, unknown>, async (toolName, toolArgs, d) => {
+        return this.dispatchTool(toolName, toolArgs, task, d);
+      }, depth);
+      if (depth === 0) this.storeDepth0Result(name, result);
+      return result;
+    }
+
     const schema = tool.manifest.inputSchema as Record<string, unknown>;
-    const input = coerceStringifiedJsonInput(args, rootJsonSchemaKind(schema));
+    const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
 
     const valid = this.ajv.validate(tool.manifest.inputSchema, input);
     if (!valid) return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
@@ -398,14 +513,21 @@ export class AgentLoop {
       return toolError("rejected_by_user", decision.reason);
     }
 
+    const wantsLlm = tool.manifest.capabilities?.includes(TOOL_CAPABILITY.llm) ?? false;
     const started = Date.now();
     const result = await this.opts.sandbox.execute(tool, input, decision.token, {
       depth,
       onInvokeTool: (subName, subArgs) => this.dispatchTool(subName, subArgs, task, depth + 1),
+      ...(wantsLlm ? { onLLM: (req) => this.runLlmCapability(req) } : {}),
     });
     const durationMs = Date.now() - started;
     this.opts.tracer.log(TRACE_KIND_TOOL_INVOKED, { name, duration: durationMs, ok: result.ok });
-    this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs });
+    if (depth === 0) {
+      const binding = this.storeDepth0Result(name, result);
+      this.opts.onToolInvoked?.({ name, args: recordArgs, ok: result.ok, durationMs, value: result.ok ? result.value : undefined, ...(binding !== null ? { binding } : {}) });
+    } else {
+      this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs, value: result.ok ? result.value : undefined });
+    }
     if (result.ok) task.invokedThisSession.add(name);
     return result;
   }

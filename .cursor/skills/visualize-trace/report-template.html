@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trace — {{SESSION_ID}}</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #21262d;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--sans); background: var(--bg); color: var(--text); line-height: 1.5; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid #58a6ff;
+      border-radius: 10px;
+      padding: 1.4rem 1.6rem;
+      margin-bottom: 1.5rem;
+    }
+    .hero h1 { font-size: 1.35rem; margin-bottom: 0.6rem; }
+    .hero .sub {
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.85rem;
+    }
+    .task {
+      margin-top: 0.9rem;
+      padding: 0.7rem 0.9rem;
+      background: var(--surface2);
+      border-radius: 6px;
+      font-size: 0.88rem;
+      border-left: 3px solid #bc8cff;
+    }
+    .section-label { font-size: 0.9rem; margin: 1rem 0 0.5rem; color: var(--muted); font-weight: 500; }
+    .config-unknown, .config-error { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); margin-top: 0.75rem; }
+    .config-error { color: #f85149; }
+    .config-source { font-size: 0.82rem; color: var(--muted); margin: 0.5rem 0; }
+    .config-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin-top: 0.5rem;
+    }
+    .config-table th, .config-table td {
+      text-align: left;
+      padding: 0.45rem 0.6rem;
+      border: 1px solid var(--border);
+    }
+    .config-table th { background: var(--surface2); color: var(--muted); font-family: var(--mono); }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin-bottom: 1.25rem;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+    }
+    .legend i { font-style: normal; padding: 0.15rem 0.45rem; border: 1px solid var(--border); border-radius: 4px; }
+    h2 { font-size: 0.95rem; color: var(--muted); font-weight: 500; margin-bottom: 0.75rem; }
+    .flow { display: flex; flex-direction: column; gap: 0.55rem; }
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      border-left: 4px solid var(--accent);
+      overflow: hidden;
+    }
+    .step.nested { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02); }
+    .head {
+      display: grid;
+      grid-template-columns: auto auto 1fr auto;
+      gap: 0.55rem;
+      align-items: center;
+      padding: 0.55rem 0.8rem;
+    }
+    .num { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); width: 1.6rem; }
+    .badge {
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      padding: 0.12rem 0.4rem;
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .head h3 { font-size: 0.86rem; font-weight: 500; }
+    .head time { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.2rem 0.65rem;
+      padding: 0 0.8rem 0.55rem;
+      font-size: 0.78rem;
+    }
+    .meta-grid dt { color: var(--muted); font-weight: 500; }
+    .meta-grid dd { font-family: var(--mono); word-break: break-word; }
+    .raw { margin: 0 0.8rem 0.55rem; font-size: 0.75rem; }
+    .raw summary { cursor: pointer; color: var(--muted); }
+    .raw pre {
+      margin-top: 0.35rem;
+      padding: 0.55rem;
+      background: var(--bg);
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      overflow: auto;
+      max-height: 200px;
+    }
+    .children {
+      margin: 0.35rem 0.6rem 0.6rem 1.1rem;
+      padding: 0.45rem 0 0.15rem 0.85rem;
+      border-left: 2px dashed var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .extra { margin-top: 2rem; }
+    .extra-body { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    .finding { border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 0.6rem; background: var(--surface2); }
+    .finding header { display: flex; gap: 0.6rem; margin-bottom: 0.35rem; font-family: var(--mono); font-size: 0.72rem; }
+    .severity { font-weight: 600; text-transform: uppercase; }
+    .finding-warning { border-left: 3px solid #e3b341; }
+    .finding-warning .severity { color: #e3b341; }
+    .finding-critical { border-left: 3px solid #f85149; }
+    .finding-critical .severity { color: #f85149; }
+    .finding-info { border-left: 3px solid #39c5cf; }
+    .finding-info .severity { color: #39c5cf; }
+    .evidence { color: var(--muted); }
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>Meta-Agent Trace</h1>
+      <div class="sub">
+        <span>session <b style="color:#58a6ff">{{SESSION_ID}}</b></span>
+        <span>{{EVENT_COUNT}} events · {{STEP_COUNT}} steps</span>
+        <span>{{START_TIME}} → {{END_TIME}}</span>
+        <span>{{TRACE_BASENAME}}</span>
+      </div>
+      <div class="task"><b>Task:</b> {{USER_TASK}}</div>
+      {{CONFIG_SECTION_HTML}}
+    </section>
+
+    <div class="legend">
+      <i style="color:#58a6ff">turn</i>
+      <i style="color:#bc8cff">llm</i>
+      <i style="color:#39c5cf">tool</i>
+      <i style="color:#d29922">workflow</i>
+      <i style="color:#e3b341">step</i>
+      <i style="color:#3fb950">invoked</i>
+      <i style="color:#f85149">synthesis</i>
+    </div>
+
+    <h2>Execution flow</h2>
+    <div class="flow">{{FLOW_HTML}}</div>
+
+    {{ANALYSIS_SECTION_HTML}}
+
+    <footer>Generated from {{TRACE_BASENAME}} · session {{SESSION_ID}}</footer>
+  </div>
+</body>
+</html>
