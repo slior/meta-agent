@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trace Report — {{SESSION_ID}}</title>
+  <title>Trace — {{SESSION_ID}}</title>
   <style>
     :root {
       --bg: #0d1117;
@@ -12,278 +12,134 @@
       --border: #30363d;
       --text: #c9d1d9;
       --muted: #8b949e;
-      --accent: #58a6ff;
-      --green: #3fb950;
-      --purple: #bc8cff;
-      --orange: #d29922;
-      --cyan: #39c5cf;
-      --red: #f85149;
-      --yellow: #e3b341;
-      --mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: var(--sans);
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      min-height: 100vh;
-    }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      background:
-        linear-gradient(rgba(88, 166, 255, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(88, 166, 255, 0.03) 1px, transparent 1px);
-      background-size: 24px 24px;
-      pointer-events: none;
-      z-index: 0;
-    }
-    .wrap {
-      position: relative;
-      z-index: 1;
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 2rem 1.5rem 4rem;
-    }
-    header {
-      border: 1px solid var(--border);
-      background: var(--surface);
-      border-radius: 8px;
-      padding: 1.75rem 2rem;
-      margin-bottom: 2rem;
-      border-left: 4px solid var(--accent);
-    }
-    header h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
-    header .meta {
-      font-family: var(--mono);
-      font-size: 0.8rem;
-      color: var(--muted);
-    }
-    header .meta span { color: var(--accent); }
-    h2 {
-      font-size: 1.15rem;
-      font-weight: 600;
-      margin: 2rem 0 1rem;
-      padding-bottom: 0.5rem;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    h2 .badge {
-      font-family: var(--mono);
-      font-size: 0.65rem;
-      font-weight: 500;
-      padding: 0.15rem 0.5rem;
-      border-radius: 4px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--muted);
-    }
-    h3 { font-size: 0.95rem; font-weight: 600; margin: 1.25rem 0 0.5rem; color: var(--accent); }
-    p, li { font-size: 0.92rem; margin-bottom: 0.6rem; }
-    ul { padding-left: 1.25rem; margin-bottom: 1rem; }
-    .card {
+    body { font-family: var(--sans); background: var(--bg); color: var(--text); line-height: 1.5; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    .hero {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1.25rem 1.5rem;
-      margin-bottom: 1.25rem;
-    }
-    .task-block {
-      border-left: 3px solid var(--accent);
-      padding-left: 1rem;
+      border-left: 4px solid #58a6ff;
+      border-radius: 10px;
+      padding: 1.4rem 1.6rem;
       margin-bottom: 1.5rem;
     }
-    .task-block.interlude { border-left-color: var(--yellow); }
-    .turn {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 1rem 1.25rem;
-      margin-bottom: 0.75rem;
-    }
-    .turn-header {
+    .hero h1 { font-size: 1.35rem; margin-bottom: 0.6rem; }
+    .hero .sub {
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      color: var(--muted);
       display: flex;
       flex-wrap: wrap;
-      align-items: center;
-      gap: 0.5rem;
-      margin-bottom: 0.5rem;
+      gap: 0.85rem;
     }
-    .turn-num {
-      font-family: var(--mono);
-      font-size: 0.75rem;
-      font-weight: 600;
-      color: var(--bg);
-      background: var(--accent);
-      padding: 0.1rem 0.45rem;
-      border-radius: 3px;
+    .task {
+      margin-top: 0.9rem;
+      padding: 0.7rem 0.9rem;
+      background: var(--surface2);
+      border-radius: 6px;
+      font-size: 0.88rem;
+      border-left: 3px solid #bc8cff;
     }
-    .tool-tag {
-      font-family: var(--mono);
-      font-size: 0.72rem;
-      padding: 0.15rem 0.5rem;
-      border-radius: 3px;
-      border: 1px solid;
+    .section-label { font-size: 0.9rem; margin: 1rem 0 0.5rem; color: var(--muted); font-weight: 500; }
+    .config-unknown, .config-error { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); margin-top: 0.75rem; }
+    .config-error { color: #f85149; }
+    .config-source { font-size: 0.82rem; color: var(--muted); margin: 0.5rem 0; }
+    .config-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin-top: 0.5rem;
     }
-    .tool-orchestrator { color: var(--accent); border-color: var(--accent); background: rgba(88,166,255,0.1); }
-    .tool-fetch { color: var(--green); border-color: var(--green); background: rgba(63,185,80,0.1); }
-    .tool-llm { color: var(--purple); border-color: var(--purple); background: rgba(188,140,255,0.1); }
-    .tool-write { color: var(--orange); border-color: var(--orange); background: rgba(210,153,34,0.1); }
-    .tool-meta { color: var(--cyan); border-color: var(--cyan); background: rgba(57,197,207,0.1); }
-    .tool-error { color: var(--red); border-color: var(--red); background: rgba(248,81,73,0.1); }
-    .tool-composite { color: var(--yellow); border-color: var(--yellow); background: rgba(227,179,65,0.1); }
-    .tool-factory { color: var(--muted); border-color: var(--border); background: rgba(139,148,158,0.1); }
-    code, .ref {
-      font-family: var(--mono);
-      font-size: 0.82rem;
-      background: var(--bg);
-      padding: 0.1rem 0.35rem;
-      border-radius: 3px;
+    .config-table th, .config-table td {
+      text-align: left;
+      padding: 0.45rem 0.6rem;
       border: 1px solid var(--border);
     }
-    .ref { color: var(--green); border-color: rgba(63,185,80,0.4); }
-    .result-ok { color: var(--green); font-family: var(--mono); font-size: 0.82rem; }
-    .result-fail { color: var(--red); font-family: var(--mono); font-size: 0.82rem; }
+    .config-table th { background: var(--surface2); color: var(--muted); font-family: var(--mono); }
     .legend {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.75rem;
-      margin: 1rem 0;
-      font-size: 0.75rem;
-      font-family: var(--mono);
-    }
-    .legend-item { display: flex; align-items: center; gap: 0.35rem; }
-    .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
-    .diagram-wrap {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem;
-      margin: 1rem 0 1.5rem;
-      overflow-x: auto;
-    }
-    .diagram-wrap svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
-    .diagram-title {
-      font-family: var(--mono);
-      font-size: 0.72rem;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 0.75rem;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.85rem;
-      margin: 1rem 0;
-    }
-    th, td {
-      text-align: left;
-      padding: 0.6rem 0.75rem;
-      border: 1px solid var(--border);
-    }
-    th {
-      background: var(--surface2);
-      font-family: var(--mono);
-      font-size: 0.75rem;
-      color: var(--muted);
-      font-weight: 500;
-    }
-    td { background: var(--surface); }
-    .config-unknown, .config-error {
-      font-family: var(--mono);
-      font-size: 0.85rem;
-      color: var(--muted);
-      margin-top: 0.5rem;
-    }
-    .config-error { color: var(--red); }
-    .config-source {
-      font-size: 0.85rem;
-      color: var(--muted);
-      margin: 1rem 0 0.5rem;
-    }
-    .overview-card h3:first-of-type { margin-top: 1rem; }
-    table.config-table { margin-top: 0.5rem; }
-    details {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      margin: 0.5rem 0 0.75rem;
-      padding: 0;
-    }
-    details summary {
-      cursor: pointer;
-      font-family: var(--mono);
-      font-size: 0.8rem;
-      padding: 0.6rem 0.9rem;
-      color: var(--muted);
-      list-style: none;
-    }
-    details summary::-webkit-details-marker { display: none; }
-    details summary::before { content: "▸ "; color: var(--accent); }
-    details[open] summary::before { content: "▾ "; }
-    details .detail-body {
-      padding: 0 0.9rem 0.75rem;
-      border-top: 1px solid var(--border);
-    }
-    pre {
-      font-family: var(--mono);
-      font-size: 0.75rem;
-      line-height: 1.45;
-      overflow-x: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-      color: var(--text);
-      background: var(--bg);
-      padding: 0.75rem;
-      border-radius: 4px;
-      border: 1px solid var(--border);
-    }
-    .finding {
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 1rem 1.25rem;
-      margin-bottom: 0.75rem;
-      background: var(--surface2);
-    }
-    .finding-header {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 0.5rem;
-      margin-bottom: 0.5rem;
-    }
-    .severity {
+      gap: 0.45rem;
+      margin-bottom: 1.25rem;
       font-family: var(--mono);
       font-size: 0.68rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      padding: 0.15rem 0.45rem;
-      border-radius: 3px;
     }
-    .finding-critical { border-left: 3px solid var(--red); }
-    .finding-critical .severity { background: rgba(248,81,73,0.2); color: var(--red); }
-    .finding-warning { border-left: 3px solid var(--yellow); }
-    .finding-warning .severity { background: rgba(227,179,65,0.2); color: var(--yellow); }
-    .finding-info { border-left: 3px solid var(--cyan); }
-    .finding-info .severity { background: rgba(57,197,207,0.2); color: var(--cyan); }
-    .timeline-row {
+    .legend i { font-style: normal; padding: 0.15rem 0.45rem; border: 1px solid var(--border); border-radius: 4px; }
+    h2 { font-size: 0.95rem; color: var(--muted); font-weight: 500; margin-bottom: 0.75rem; }
+    .flow { display: flex; flex-direction: column; gap: 0.55rem; }
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      border-left: 4px solid var(--accent);
+      overflow: hidden;
+    }
+    .step.nested { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02); }
+    .head {
       display: grid;
-      grid-template-columns: 11rem 8rem 1fr;
-      gap: 0.75rem;
-      padding: 0.45rem 0;
-      border-bottom: 1px solid var(--border);
-      font-size: 0.8rem;
+      grid-template-columns: auto auto 1fr auto;
+      gap: 0.55rem;
+      align-items: center;
+      padding: 0.55rem 0.8rem;
     }
-    .timeline-row:last-child { border-bottom: none; }
-    .timeline-ts { font-family: var(--mono); color: var(--muted); }
-    .timeline-kind { font-family: var(--mono); color: var(--accent); }
+    .num { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); width: 1.6rem; }
+    .badge {
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      padding: 0.12rem 0.4rem;
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .head h3 { font-size: 0.86rem; font-weight: 500; }
+    .head time { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.2rem 0.65rem;
+      padding: 0 0.8rem 0.55rem;
+      font-size: 0.78rem;
+    }
+    .meta-grid dt { color: var(--muted); font-weight: 500; }
+    .meta-grid dd { font-family: var(--mono); word-break: break-word; }
+    .raw { margin: 0 0.8rem 0.55rem; font-size: 0.75rem; }
+    .raw summary { cursor: pointer; color: var(--muted); }
+    .raw pre {
+      margin-top: 0.35rem;
+      padding: 0.55rem;
+      background: var(--bg);
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      overflow: auto;
+      max-height: 200px;
+    }
+    .children {
+      margin: 0.35rem 0.6rem 0.6rem 1.1rem;
+      padding: 0.45rem 0 0.15rem 0.85rem;
+      border-left: 2px dashed var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .extra { margin-top: 2rem; }
+    .extra-body { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    .finding { border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 0.6rem; background: var(--surface2); }
+    .finding header { display: flex; gap: 0.6rem; margin-bottom: 0.35rem; font-family: var(--mono); font-size: 0.72rem; }
+    .severity { font-weight: 600; text-transform: uppercase; }
+    .finding-warning { border-left: 3px solid #e3b341; }
+    .finding-warning .severity { color: #e3b341; }
+    .finding-critical { border-left: 3px solid #f85149; }
+    .finding-critical .severity { color: #f85149; }
+    .finding-info { border-left: 3px solid #39c5cf; }
+    .finding-info .severity { color: #39c5cf; }
+    .evidence { color: var(--muted); }
     footer {
-      margin-top: 3rem;
+      margin-top: 2.5rem;
       padding-top: 1rem;
       border-top: 1px solid var(--border);
       font-family: var(--mono);
@@ -294,89 +150,34 @@
 </head>
 <body>
   <div class="wrap">
-
-    <!-- PLACEHOLDER:HEADER -->
-    <header>
-      <h1>Meta-Agent Trace Report</h1>
-      <p class="meta">
-        session <span>{{SESSION_ID}}</span> &nbsp;·&nbsp;
-        trace <span>{{TRACE_BASENAME}}</span> &nbsp;·&nbsp;
-        <span>{{START_TIME}}</span> → <span>{{END_TIME}}</span>
-      </p>
-    </header>
-
-    <!-- PLACEHOLDER:OVERVIEW -->
-    <section>
-      <h2>Overview</h2>
-      <div class="card overview-card">
-        {{OVERVIEW_PARAGRAPH}}
-        <div class="legend">
-          <div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div> orchestrator</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div> fetch</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#bc8cff"></div> llm_generate</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#d29922"></div> write</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#39c5cf"></div> meta (find_tool)</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#e3b341"></div> composite workflow</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#f85149"></div> error</div>
-        </div>
-        {{CONFIG_SECTION_HTML}}
+    <section class="hero">
+      <h1>Meta-Agent Trace</h1>
+      <div class="sub">
+        <span>session <b style="color:#58a6ff">{{SESSION_ID}}</b></span>
+        <span>{{EVENT_COUNT}} events · {{STEP_COUNT}} steps</span>
+        <span>{{START_TIME}} → {{END_TIME}}</span>
+        <span>{{TRACE_BASENAME}}</span>
       </div>
+      <div class="task"><b>Task:</b> {{USER_TASK}}</div>
+      {{CONFIG_SECTION_HTML}}
     </section>
 
-    <!-- PLACEHOLDER:TASKS_AND_INTERLUDES -->
-    <!-- Repeat per segment: <section> with task-block, turn cards, task diagram -->
-    {{TASK_SECTIONS_HTML}}
+    <div class="legend">
+      <i style="color:#58a6ff">turn</i>
+      <i style="color:#bc8cff">llm</i>
+      <i style="color:#39c5cf">tool</i>
+      <i style="color:#d29922">workflow</i>
+      <i style="color:#e3b341">step</i>
+      <i style="color:#3fb950">invoked</i>
+      <i style="color:#f85149">synthesis</i>
+    </div>
 
-    <!-- PLACEHOLDER:REFERENCE_CHAIN -->
-    <section>
-      <h2>Reference chain</h2>
-      <div class="card">
-        <table>
-          <thead>
-            <tr><th>Ref</th><th>Produced by</th><th>Consumed by</th></tr>
-          </thead>
-          <tbody>
-            {{REF_TABLE_ROWS}}
-          </tbody>
-        </table>
-      </div>
-      <div class="diagram-wrap">
-        <div class="diagram-title">Full session — ref dependency graph</div>
-        {{SVG_REF_DEPENDENCY_GRAPH}}
-      </div>
-    </section>
+    <h2>Execution flow</h2>
+    <div class="flow">{{FLOW_HTML}}</div>
 
-    <!-- PLACEHOLDER:ANALYSIS -->
-    <section>
-      <h2>Analysis</h2>
-      <div class="card">
-        <p>{{ANALYSIS_SUMMARY}}</p>
-        {{FINDINGS_HTML}}
-      </div>
-    </section>
+    {{ANALYSIS_SECTION_HTML}}
 
-    <!-- PLACEHOLDER:OBSERVATIONS -->
-    <section>
-      <h2>Observations</h2>
-      <div class="card">
-        {{OBSERVATIONS_LIST_HTML}}
-      </div>
-    </section>
-
-    <!-- PLACEHOLDER:RAW_TIMELINE -->
-    <section>
-      <h2>Event timeline</h2>
-      <details>
-        <summary>All trace events ({{EVENT_COUNT}} lines) — click to expand</summary>
-        <div class="detail-body">
-          {{TIMELINE_ROWS_HTML}}
-        </div>
-      </details>
-    </section>
-
-    <footer>
-      Generated from trace {{TRACE_BASENAME}} · meta-agent session {{SESSION_ID}}
-    </footer>
+    <footer>Generated from {{TRACE_BASENAME}} · session {{SESSION_ID}}</footer>
   </div>
 </body>
 </html>

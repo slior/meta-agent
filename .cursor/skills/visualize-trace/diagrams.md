@@ -1,5 +1,7 @@
 # SVG diagram patterns
 
+**Optional secondary content.** The primary trace report is the nested execution flow ([nested-flow.md](nested-flow.md)). Add SVG diagrams below the flow only when the user asks for dependency graphs or task-level overviews — never instead of the nested tree.
+
 Use inline SVG only (no Mermaid, no external JS). Copy these patterns and fill labels from trace data.
 
 ## Conventions

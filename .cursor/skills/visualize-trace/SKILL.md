@@ -2,14 +2,17 @@
 name: visualize-trace
 description: >-
   Parses a meta-agent JSONL trace file and writes a self-contained HTML report with
-  narrative, SVG flow diagrams, reference chains, issue analysis, and optional agent
-  configuration. Use when the user asks to visualize a trace, explain a trace flow,
-  generate a trace report, or provides a trace file path and output path for documentation.
+  a nested execution-flow tree (turns, dispatches, workflows, steps), color-coded
+  step cards, collapsible raw events, and optional config/analysis sections. Use when
+  the user asks to visualize a trace, explain a trace flow, generate a trace report,
+  or provides a trace file path and output path for documentation.
 ---
 
 # Visualize trace
 
 Generate a **self-contained HTML report** from a meta-agent session trace (`.jsonl`).
+
+The **primary output** is a **nested execution flow**: every trace event as a color-coded step card, indented under its parent (turn → dispatch → workflow → step). Raw payloads live in collapsed `<details>` blocks; summaries stay scannable.
 
 ## Required inputs
 
@@ -24,24 +27,16 @@ Both are **mandatory**. If either is missing, ask before proceeding.
 
 | Input | Description |
 |-------|-------------|
-| **Config file path** | Path to the meta-agent JSON config used for the session (e.g. `config/meta-agent.example.json`, `tmp/meta-agent.json`). If omitted, the Overview shows **Configuration unknown**. |
+| **Config file path** | Path to the meta-agent JSON config used for the session. If omitted, the header shows **Configuration unknown**. |
 
 ## Quick checklist
-
-Copy and track progress:
 
 ```
 Visualize trace
 - [ ] Step 1: Read trace file (all lines)
-- [ ] Step 1b: Read config file (if path given)
-- [ ] Step 2: Parse events and build session model
-- [ ] Step 3: Segment user tasks and interludes
-- [ ] Step 4: Extract refs, workflows, failures
-- [ ] Step 5: Write narrative (turn-by-turn)
-- [ ] Step 6: Build SVG diagrams
-- [ ] Step 7: Run analysis heuristics
-- [ ] Step 8: Fill report-template.html → write output
-- [ ] Step 9: Verify output file exists and opens standalone
+- [ ] Step 2: Run generate-trace-html.py (preferred) OR build tree manually
+- [ ] Step 3: Verify output — nesting, colors, collapsed raw events
+- [ ] Step 4: Tell user the output path (`open path/to/report.html`)
 ```
 
 ## Workflow
@@ -50,181 +45,131 @@ Visualize trace
 
 1. Read the entire trace file (JSONL: one JSON object per line).
 2. Skip blank lines. Parse each line as `{ ts, sessionId, kind, data }`.
-3. If parse fails on a line, note it in Analysis as **Warning** (truncated/corrupt trace).
-4. Record **first** and **last** `ts` for the header; **sessionId** from any event; basename of trace file for footer.
+3. If parse fails on a line, note it when building analysis (truncated/corrupt trace).
+4. Record first/last `ts`, `sessionId`, and trace basename for the header.
 
-Large files: read in chunks, but **every line** must be represented in the event timeline (Step 8).
+### Step 2 — Generate HTML (preferred)
 
-### Step 1b — Read agent configuration (optional)
+**Always prefer the generator script** — it implements the canonical nested layout:
 
-1. If the user **did not** provide a config file path → set `{{CONFIG_SECTION_HTML}}` to the **unknown** template in [config-format.md](config-format.md).
-2. If a config path **was** provided:
-   - Read and parse the JSON file.
-   - Flatten all keys to dot notation (see [config-format.md](config-format.md)).
-   - Build the configuration table HTML; include source basename.
-   - On read/parse error → use the **error** template; add an Info finding in Analysis.
-3. Use config values when analyzing the trace (e.g. `yolo: false` explains `execution-denied` events; `maxTurns` vs actual turn count).
+```bash
+python3 .cursor/skills/visualize-trace/generate-trace-html.py TRACE.jsonl OUTPUT.html
+python3 .cursor/skills/visualize-trace/generate-trace-html.py TRACE.jsonl OUTPUT.html --config CONFIG.json
+python3 .cursor/skills/visualize-trace/generate-trace-html.py TRACE.jsonl OUTPUT.html --no-analysis
+```
 
-### Step 2 — Build the session model
+The script:
 
-Walk events in order. For each event, classify using [trace-kinds.md](trace-kinds.md).
+1. Parses events and builds the nested tree ([nested-flow.md](nested-flow.md))
+2. Renders step cards with kind colors, meta grids, and compact raw JSON
+3. Fills [report-template.html](report-template.html) and writes the output path
 
-Track:
+**Manual fallback** (script unavailable): follow [nested-flow.md](nested-flow.md) exactly and fill `report-template.html` placeholders yourself. Do not invent a different layout.
 
-- **Turns**: pair `llm-turn-start` / `llm-turn` by `data.turn`
-- **Tool calls**: `tool-dispatch-start` → optional workflow events → `tool-invoked` → `tool-call`
-- **LLM calls**: `llm-call` with `data.phase` (orchestration, capability, synthesis, factory-*)
-- **Workflows**: nest `workflow-step-*` between `workflow-start` and `workflow-end`
-- **Refs**: from `tool-call.result.ref` and `$ref` in subsequent `tool-call.args`
-- **Factory**: `tool-created`, `tool-rejected`, `factory-gen-draft`, `factory-repair-llm`
-- **Denials**: `execution-denied`
+### Step 3 — Verify output
 
-### Step 3 — Segment user tasks
+Confirm all of the following before telling the user the report is ready:
 
-Split the session into **segments**:
+| Check | Expected |
+|-------|----------|
+| File exists at requested output path | Yes |
+| No unresolved `{{PLACEHOLDER}}` tokens | None |
+| Every trace event appears once | Count matches JSONL line count |
+| Turns nest LLM + dispatch children | `llm-turn-start` is parent of turn events |
+| Workflows nest under dispatch | `workflow-start` inside `tool-dispatch-start` for composites |
+| Steps nest workflow internals | `tool-invoked` / capability `llm-call` inside `workflow-step-start` |
+| Raw events collapsed | Each step has `<details class="raw">`; LLM bodies not inline |
+| Kind accent colors | Match table in [nested-flow.md](nested-flow.md) |
+| Opens standalone | No CDN, no JavaScript, no external assets |
 
-| Segment type | How to detect |
-|--------------|---------------|
-| **User task** | Starts at first event or at `llm-turn-start` with `turn: 0` after prior `llm-synthesis` |
-| **Interlude** | Events between tasks with no new user message: `tool-created`, `tool-rejected`, factory events |
+Tell the user: `open path/to/report.html`
 
-For each user task, extract:
+## Nested tree rules (summary)
 
-- **User message** — from first orchestration `llm-call` in segment: last `role: "user"` in `request.messages` (ignore recovery hints and system prompts)
-- **Turns** — orchestration cycles from turn 0 through `stop` + synthesis
-- **Outcome** — synthesis text or final successful tool results
+Full spec: [nested-flow.md](nested-flow.md). Event kinds: [trace-kinds.md](trace-kinds.md).
 
-Label tasks **Task 1**, **Task 2**, … Interludes get a descriptive badge (e.g. `tool lift`, `factory`).
+```
+llm-turn-start          → root turn block
+  llm-call, llm-turn    → children of turn
+  tool-dispatch-start   → child of turn
+    workflow-start      → child of dispatch
+      workflow-step-start → child of workflow
+        tool-invoked, llm-call (capability), workflow-step-end → children of step
+      workflow-end      → child of workflow
+    tool-call           → child of dispatch (after workflow)
+llm-synthesis-start     → root synthesis block
+  llm-call (synthesis), llm-synthesis → children
+```
 
-### Step 4 — Extract data dependencies
+## Step card format
 
-Build a **reference table** (all `r_*` bindings):
+Each event renders as:
 
-| Ref | Produced by | Consumed by |
-|-----|-------------|-------------|
+```html
+<article class="step nested" style="--accent:#58a6ff" data-kind="llm-turn-start">
+  <header class="head">
+    <span class="num">1</span>
+    <span class="badge">llm-turn-start</span>
+    <h3>Turn 0 start</h3>
+    <time>14:41:48.847</time>
+  </header>
+  <dl class="meta-grid">…</dl>          <!-- optional, kind-specific -->
+  <details class="raw"><summary>Raw event</summary><pre>…</pre></details>
+  <div class="children">…nested steps…</div>
+</article>
+```
 
-Rules:
-
-- Producer = `tool-call` or workflow step that emitted `result.ref` or composite output ref
-- Consumer = later `tool-call` whose `args` contain `{ "$ref": "…", "path": "…" }`
-- Include workflow-internal refs when visible in trace
-
-### Step 5 — Write the narrative
-
-For **each segment**, write plain-language prose a human can follow.
-
-**Per orchestration turn**, include:
-
-1. **Reasoning** — why the agent picked this tool (catalog match, recovery, composite, etc.)
-2. **Tools called** — meta-tool name and underlying registry tool if `invoke_tool`
-3. **Args** — show values; **truncate strings longer than 20 chars** with `…` in summary text
-4. **Result** — `ok` / error, ref name, key metrics (bytes, duration, token usage)
-5. **Data passed** — explicit `$ref` and `path` between steps
-
-**Workflow segments**: describe each `workflow-step-start` → `workflow-step-end` with `tool`, `durationMs`, and data flow (fetch text → llm summary → write path).
-
-**Interludes**: who approved/rejected, tool name, hash if present.
-
-Use HTML turn cards (see [svg-defaults.md](svg-defaults.md)). Put long JSON, full LLM bodies, and complete `result.value` inside `<details>` collapsibles.
-
-### Step 6 — Build SVG diagrams
-
-Requirements:
-
-- **Self-contained inline SVG** only — no Mermaid, no CDN, no JavaScript
-- Follow colors and patterns in [diagrams.md](diagrams.md)
-- Use unique marker ids per diagram on the page
-
-Minimum diagrams:
-
-| Diagram | When |
-|---------|------|
-| Per-task flow | One per user task — manual chain, composite, or recovery branch |
-| Ref dependency graph | When session has 2+ refs or 2+ tasks |
-| Workflow expansion | When `workflow-start` appears — dashed box with steps |
-
-Label edges with ref names (`.text`, `$ref`) and truncated URLs/paths.
-
-### Step 7 — Analyze issues
-
-Apply every heuristic in [analysis-heuristics.md](analysis-heuristics.md). For each finding:
-
-- Assign **Critical**, **Warning**, or **Info**
-- Cite evidence: `ts`, `kind`, and short quote
-- State impact and **suggested fix**
-
-Render findings as `.finding` blocks (see analysis-heuristics.md HTML pattern).
-
-**Observations** section: neutral patterns (efficiency, good `$ref` usage, successful recovery) — separate from issues.
-
-If no issues: say so explicitly; still list 1–2 positive observations.
-
-### Step 8 — Fill the template and write output
-
-1. Read [report-template.html](report-template.html) — **do not invent a new layout**
-2. Replace every `{{PLACEHOLDER}}`:
-
-| Placeholder | Content |
-|-------------|---------|
-| `{{SESSION_ID}}` | From trace |
-| `{{TRACE_BASENAME}}` | Filename only |
-| `{{START_TIME}}` / `{{END_TIME}}` | Short local or ISO time from first/last event |
-| `{{OVERVIEW_PARAGRAPH}}` | 2–4 sentences: task count, main tools, arc of session |
-| `{{CONFIG_SECTION_HTML}}` | Configuration subsection — see [config-format.md](config-format.md) |
-| `{{TASK_SECTIONS_HTML}}` | All task + interlude `<section>` blocks |
-| `{{REF_TABLE_ROWS}}` | `<tr>…</tr>` rows |
-| `{{SVG_REF_DEPENDENCY_GRAPH}}` | Custom SVG for this session |
-| `{{ANALYSIS_SUMMARY}}` | 1–2 sentence analysis overview |
-| `{{FINDINGS_HTML}}` | Finding cards |
-| `{{OBSERVATIONS_LIST_HTML}}` | `<ul><li>…</li></ul>` |
-| `{{EVENT_COUNT}}` | Line count |
-| `{{TIMELINE_ROWS_HTML}}` | One `.timeline-row` per event |
-
-3. Write the filled HTML to the **output path** (create parent dirs if needed).
-4. Ensure the file is valid HTML5, standalone, no external assets.
-
-### Step 9 — Verify
-
-- Output file exists at the requested path
-- Placeholders are fully replaced (no `{{` left)
-- Report includes: Overview (with Configuration subsection), ≥1 task section, Analysis, Event timeline
-- Tell the user the output path and how to open it (`open path/to/report.html`)
+Patterns and title rules: [step-format.md](step-format.md) (formerly svg-defaults.md).
 
 ## Display rules
 
-- **Truncate** inline arg values at **20 characters** with `…`
-- **Collapsible** (`<details>`) for: full JSON results, `llm-call` bodies, errors, previews longer than 3 lines
-- **Never omit** refs, error kinds, byte counts, durations, or token usage when present in trace
+- **Truncate** inline strings at **60 characters** with `…` (meta grid, titles)
+- **Collapsible raw JSON** on every step — default collapsed
+- **Compact `llm-call` raw data** — never include `request.messages`; truncate response content/args
+- **Never omit** when present in trace: refs, error kinds, byte counts, durations, token usage
 - **Do not invent** events or values not in the trace
 
-## Tool tag CSS classes
+## Optional sections
 
-| Class | Use for |
-|-------|---------|
-| `tool-orchestrator` | stop, synthesis |
-| `tool-fetch` | fetch-webpage-text, fetch-rss-feed |
-| `tool-llm` | llm_generate |
-| `tool-write` | write-file-text |
-| `tool-meta` | find_tool, list_tools, propose_* |
-| `tool-composite` | composite / workflow invoke |
-| `tool-error` | failed calls, schema violations |
-| `tool-factory` | tool-created, tool-rejected, factory-* |
+The generator includes by default:
+
+| Section | When |
+|---------|------|
+| Configuration table | `--config` path provided |
+| Analysis findings | unless `--no-analysis`; basic heuristics from [analysis-heuristics.md](analysis-heuristics.md) |
+
+For deeper analysis (reference chains, SVG dependency graphs, narrative prose), extend the report **below** the execution flow — do not replace or flatten the nested tree.
+
+## Kind accent colors
+
+| Color | Kinds |
+|-------|-------|
+| `#58a6ff` | turn start/end |
+| `#bc8cff` | llm-call |
+| `#39c5cf` | tool dispatch/call |
+| `#3fb950` | tool-invoked |
+| `#d29922` | workflow start/end |
+| `#e3b341` | workflow step start/end |
+| `#f85149` | synthesis, execution-denied, tool-rejected |
+| `#8b949e` | factory events |
 
 ## Additional resources
 
-- [config-format.md](config-format.md) — optional agent config flattening and HTML templates
+- [generate-trace-html.py](generate-trace-html.py) — canonical generator (run this first)
+- [nested-flow.md](nested-flow.md) — tree algorithm, titles, compact raw JSON
+- [step-format.md](step-format.md) — HTML step card patterns
+- [report-template.html](report-template.html) — HTML skeleton with placeholders
 - [trace-kinds.md](trace-kinds.md) — all event kinds and `data` fields
-- [analysis-heuristics.md](analysis-heuristics.md) — issue patterns and fixes
-- [diagrams.md](diagrams.md) — SVG layout patterns
-- [svg-defaults.md](svg-defaults.md) — HTML snippets for turn cards and timeline rows
-- [report-template.html](report-template.html) — deterministic HTML skeleton
+- [config-format.md](config-format.md) — optional agent config flattening
+- [analysis-heuristics.md](analysis-heuristics.md) — issue patterns for analysis section
+- [diagrams.md](diagrams.md) — optional SVG diagrams (secondary to nested flow)
 
 ## Example invocation
 
 **User:** "Visualize `tmp/tmp/traces/foo.jsonl` to `tmp/report.html`"
 
-**Agent:** Read skill → parse trace → config unknown → fill template → write `tmp/report.html` → confirm.
+**Agent:** Read skill → run `generate-trace-html.py` → verify → confirm path.
 
 **User:** "Visualize `tmp/traces/foo.jsonl` to `tmp/report.html` using config `tmp/meta-agent.json`"
 
-**Agent:** Read skill → parse trace → flatten config → fill template → write report → confirm.
+**Agent:** Read skill → run generator with `--config` → verify → confirm path.
