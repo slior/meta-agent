@@ -23,6 +23,7 @@ import { createStderrDebugSink } from "./resolve-debug.ts";
 import { writeSandboxLogLine } from "./sandbox-log-format.ts";
 import { formatTraceEventParts } from "./trace-progress.ts";
 import { writeProgressLine } from "./terminal-write.ts";
+import { formatIntegrityIssues } from "./integrity-format.ts";
 import { handleToolsCommand, isToolsCommand } from "./tools-table.ts";
 
 /** Slash commands handled in the interactive REPL loop. */
@@ -99,6 +100,8 @@ function recordInvocation(invocations: InvocationRecord[], ev: ToolInvokedCaptur
 
 async function createReplSession(config: Config, apiKey: string): Promise<ReplSession> {
   const registry = await FsToolRegistry.open(config.toolsDir);
+  const integritySummary = formatIntegrityIssues(registry.integrityReport());
+  if (integritySummary) process.stderr.write(`${integritySummary}\n`);
   await seedBuiltins(registry);
   const index = await HybridToolIndex.open(registry);
   const sandbox = new NodePermissionSandbox({
