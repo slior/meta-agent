@@ -13,6 +13,13 @@ export {
 export type { TraceEvent, TracerObserver, TracerOptions, LlmTracePhase } from "./tracer.ts";
 export type { ToolRegistry } from "./registry/tool-registry.ts";
 export { FsToolRegistry } from "./registry/fs-registry.ts";
+export {
+  INTEGRITY_STATUS,
+  INTEGRITY_REASON,
+  RegistryIntegrityError,
+  verifyToolIntegrity,
+} from "./registry/integrity.ts";
+export type { IntegrityStatus, IntegrityResult, IntegrityIssue } from "./registry/integrity.ts";
 export type { ToolIndex } from "./index-store/interface.ts";
 export { HybridToolIndex } from "./index-store/hybrid-index.ts";
 export { APPROVAL_DECISION, RISK_TIER } from "./approval/interface.ts";
