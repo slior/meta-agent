@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { TOOL_KIND, type ApprovalRecord, type Tool, type ToolManifest, type ToolSummary } from "../types.ts";
 import type { Workflow } from "../workflow/types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
-import { type IntegrityIssue, INTEGRITY_STATUS, verifyToolIntegrity } from "./integrity.ts";
+import { type IntegrityIssue, INTEGRITY_STATUS, RegistryIntegrityError, verifyToolIntegrity } from "./integrity.ts";
 import { isENOENT, registryLogDebug, registryLogWarn } from "./registry-log.ts";
 
 /**
@@ -281,6 +281,16 @@ export class FsToolRegistry implements ToolRegistry {
    * @param approval Corresponding approval record
    */
   async save(tool: Tool, approval: ApprovalRecord): Promise<void> {
+    const verdict = verifyToolIntegrity(tool.code, tool.manifest, approval);
+    if (verdict.status !== INTEGRITY_STATUS.ok) {
+      this.recordIntegrityIssue({
+        name: tool.manifest.name,
+        path: join(this.dir, tool.manifest.name),
+        status: verdict.status,
+        reason: verdict.reason,
+      });
+      throw new RegistryIntegrityError(tool.manifest.name, verdict);
+    }
     const sub = join(this.dir, tool.manifest.name);
     await mkdir(sub, { recursive: true });
     await writeFile(join(sub, "manifest.json"), JSON.stringify(tool.manifest, null, 2), "utf8");

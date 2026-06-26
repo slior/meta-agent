@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FsToolRegistry } from "./fs-registry.ts";
-import { INTEGRITY_STATUS } from "./integrity.ts";
+import { INTEGRITY_STATUS, RegistryIntegrityError } from "./integrity.ts";
 import type { Tool } from "../types.ts";
 import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
 
@@ -158,6 +158,32 @@ test("load marks needs-review when approval hash no longer matches manifest", as
     const issue = report[0];
     assert.ok(issue);
     assert.equal(issue.status, INTEGRITY_STATUS.needsReview);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("save throws when manifest hash does not match the body", async () => {
+  const dir = await tmp();
+  try {
+    const reg = await FsToolRegistry.open(dir);
+    const t = sample("alpha");
+    const broken = { ...t, manifest: { ...t.manifest, hash: "sha256:" + "d".repeat(64) } };
+    await assert.rejects(reg.save(broken, makeConsistentApproval(t)), RegistryIntegrityError);
+    const reopened = await FsToolRegistry.open(dir);
+    assert.equal(await reopened.get("alpha"), null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("save throws when approval hash does not bind to the manifest", async () => {
+  const dir = await tmp();
+  try {
+    const reg = await FsToolRegistry.open(dir);
+    const t = sample("alpha");
+    const badApproval = { hash: "sha256:" + "e".repeat(64), approvedAt: "x", approvedBy: "u", alwaysApprove: false };
+    await assert.rejects(reg.save(t, badApproval), RegistryIntegrityError);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
