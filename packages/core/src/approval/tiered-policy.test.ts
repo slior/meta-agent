@@ -43,6 +43,34 @@ test("riskTier: env var matching SECRET pattern => elevated", () => {
   assert.equal(riskTier(mkTool({ env: ["OPENAI_API_KEY"] }).manifest.permissions, "/wkspc"), RISK_TIER.elevated);
 });
 
+test("checkExecution prompts (no auto-approve) when approval is null, even for low tier", async () => {
+  const tool = mkTool();
+  let prompts = 0;
+  const prompter = {
+    promptGate1: async () => { throw new Error("no"); },
+    promptGate23: async () => {
+      prompts++;
+      return { decision: APPROVAL_DECISION.approve, token: "tok", cacheForSession: false };
+    },
+  };
+  const policy = new TieredApprovalPolicy(prompter, { workspace: "/wkspc" });
+  const r = await policy.checkExecution(tool, {}, null);
+  assert.equal(r.decision, APPROVAL_DECISION.approve);
+  assert.equal(prompts, 1);
+});
+
+test("checkExecution can reject a needs-review (null-approval) tool", async () => {
+  const tool = mkTool();
+  const prompter = {
+    promptGate1: async () => { throw new Error("no"); },
+    promptGate23: async () => ({ decision: APPROVAL_DECISION.reject, reason: "user declined" }),
+  };
+  const policy = new TieredApprovalPolicy(prompter, { workspace: "/wkspc" });
+  const r = await policy.checkExecution(tool, {}, null);
+  assert.equal(r.decision, APPROVAL_DECISION.reject);
+  assert.equal(r.reason, "user declined");
+});
+
 test("checkExecution auto-approves low with no prompt", async () => {
   const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no prompt expected"); } };
   const policy = new TieredApprovalPolicy(prompter, { workspace: "/wkspc" });

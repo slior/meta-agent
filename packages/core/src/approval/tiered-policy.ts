@@ -54,6 +54,10 @@ export class TieredApprovalPolicy implements ApprovalPolicy {
   async checkExecution(tool: Tool, args: unknown, approval: ApprovalRecord | null): Promise<ExecutionDecision> {
     if (this.yolo) return { decision: APPROVAL_DECISION.approve, token: newToken(), cacheForSession: false };
 
+    if (approval === null) {
+      return this.prompter.promptGate23(tool, args, riskTier(tool.manifest.permissions, this.workspace));
+    }
+
     if (approval && approval.hash !== tool.manifest.hash) {
       const r = await this.prompter.promptGate23(tool, args, riskTier(tool.manifest.permissions, this.workspace));
       return r;
