@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { TOOL_KIND, type ApprovalRecord, type Tool, type ToolManifest, type ToolSummary } from "../types.ts";
 import type { Workflow } from "../workflow/types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
+import { type IntegrityIssue, INTEGRITY_STATUS, verifyToolIntegrity } from "./integrity.ts";
 import { isENOENT, registryLogDebug, registryLogWarn } from "./registry-log.ts";
 
 /**
@@ -31,11 +32,13 @@ export class FsToolRegistry implements ToolRegistry {
   /**
    * In-memory cache mapping tool names to their tool object and approval record.
    */
-  private cache = new Map<string, { tool: Tool; approval: ApprovalRecord | null }>();
+  private cache = new Map<string, { tool: Tool; approval: ApprovalRecord | null; needsReview?: boolean }>();
   /**
    * In-memory cache for workflow definitions, by tool name.
    */
   private workflows = new Map<string, Workflow>();
+  /** Integrity problems found during the most recent rehydrate (and on failed saves). */
+  private integrityIssues: IntegrityIssue[] = [];
 
   /**
    * Private constructor. Use static open() to instantiate and load registry from disk.
@@ -65,6 +68,17 @@ export class FsToolRegistry implements ToolRegistry {
     return this.dir;
   }
 
+  /** Records an integrity issue and logs a warning. Both recorded (queryable) and logged (stderr). */
+  private recordIntegrityIssue(issue: IntegrityIssue): void {
+    this.integrityIssues.push(issue);
+    registryLogWarn(`tool '${issue.name}' ${issue.status}: ${issue.reason} (${issue.path})`);
+  }
+
+  /** Integrity problems found at load (and on failed saves) since the last rehydrate. */
+  integrityReport(): IntegrityIssue[] {
+    return [...this.integrityIssues];
+  }
+
   /** True for hidden or non-tool entries under the registry root (e.g. `.DS_Store`). */
   private shouldSkipFile(name: string): boolean {
     return name.startsWith(".");
@@ -80,17 +94,35 @@ export class FsToolRegistry implements ToolRegistry {
     manifest: ToolManifest,
     approval: ApprovalRecord | null,
   ): Promise<void> {
+    let wRaw: string;
     try {
-      const wRaw = await readFile(workflowPath, "utf8");
-      const workflow = JSON.parse(wRaw) as Workflow;
-      this.workflows.set(manifest.name, workflow);
-      this.cache.set(manifest.name, {
-        tool: { manifest, code: "" },
-        approval,
-      });
+      wRaw = await readFile(workflowPath, "utf8");
     } catch (err) {
       registryLogDebug(`entry '${entryName}': missing or corrupt workflow.json`, err);
+      return;
     }
+    let workflow: Workflow;
+    try {
+      workflow = JSON.parse(wRaw) as Workflow;
+    } catch (err) {
+      registryLogDebug(`entry '${entryName}': missing or corrupt workflow.json`, err);
+      return;
+    }
+    const result = verifyToolIntegrity(wRaw, manifest, approval);
+    if (result.status === INTEGRITY_STATUS.quarantined) {
+      this.recordIntegrityIssue({ name: manifest.name, path: workflowPath, status: result.status, reason: result.reason });
+      return;
+    }
+    const needsReview = result.status === INTEGRITY_STATUS.needsReview;
+    if (needsReview) {
+      this.recordIntegrityIssue({ name: manifest.name, path: workflowPath, status: result.status, reason: result.reason });
+    }
+    this.workflows.set(manifest.name, workflow);
+    this.cache.set(manifest.name, {
+      tool: { manifest, code: "" },
+      approval: needsReview ? null : approval,
+      ...(needsReview ? { needsReview: true } : {}),
+    });
   }
 
   /**
@@ -103,12 +135,24 @@ export class FsToolRegistry implements ToolRegistry {
     manifest: ToolManifest,
     approval: ApprovalRecord | null,
   ): Promise<void> {
+    let code: string;
     try {
-      const code = await readFile(codePath, "utf8");
-      this.cache.set(manifest.name, { tool: { manifest, code }, approval });
+      code = await readFile(codePath, "utf8");
     } catch (err) {
       registryLogDebug(`entry '${entryName}': missing or unreadable tool.ts`, err);
+      return;
     }
+    const result = verifyToolIntegrity(code, manifest, approval);
+    if (result.status === INTEGRITY_STATUS.quarantined) {
+      this.recordIntegrityIssue({ name: manifest.name, path: codePath, status: result.status, reason: result.reason });
+      return;
+    }
+    if (result.status === INTEGRITY_STATUS.needsReview) {
+      this.recordIntegrityIssue({ name: manifest.name, path: codePath, status: result.status, reason: result.reason });
+      this.cache.set(manifest.name, { tool: { manifest, code }, approval: null, needsReview: true });
+      return;
+    }
+    this.cache.set(manifest.name, { tool: { manifest, code }, approval });
   }
 
   /**
@@ -119,6 +163,7 @@ export class FsToolRegistry implements ToolRegistry {
   private async rehydrate(): Promise<void> {
     this.cache.clear();
     this.workflows.clear();
+    this.integrityIssues = [];
     let entries: string[];
     try {
       entries = await readdir(this.dir);

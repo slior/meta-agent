@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FsToolRegistry } from "./fs-registry.ts";
+import { INTEGRITY_STATUS } from "./integrity.ts";
 import type { Tool } from "../types.ts";
 import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
 
@@ -114,6 +115,72 @@ test("registry rehydrates from disk on reopen", async () => {
     reg = await FsToolRegistry.open(dir);
     assert.equal((await reg.list()).length, 1);
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("load quarantines a tool whose code was edited after approval", async () => {
+  const dir = await tmp();
+  try {
+    let reg = await FsToolRegistry.open(dir);
+    const t = sample("alpha");
+    await reg.save(t, makeConsistentApproval(t));
+    // Tamper with the body on disk, leaving manifest.json/approval.json intact.
+    await writeFile(join(dir, "alpha", "tool.ts"), "export async function run(i){return 'evil';}", "utf8");
+    reg = await FsToolRegistry.open(dir);
+    assert.equal(await reg.get("alpha"), null);
+    assert.equal((await reg.list()).length, 0);
+    const report = reg.integrityReport();
+    assert.equal(report.length, 1);
+    const issue = report[0];
+    assert.ok(issue);
+    assert.equal(issue.name, "alpha");
+    assert.equal(issue.status, INTEGRITY_STATUS.quarantined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("load marks needs-review when approval hash no longer matches manifest", async () => {
+  const dir = await tmp();
+  try {
+    let reg = await FsToolRegistry.open(dir);
+    const t = sample("alpha");
+    await reg.save(t, makeConsistentApproval(t));
+    // Replace approval.json with a stale (non-matching) hash; body+manifest stay consistent.
+    const stale = { hash: "sha256:" + "c".repeat(64), approvedAt: "x", approvedBy: "u", alwaysApprove: true };
+    await writeFile(join(dir, "alpha", "approval.json"), JSON.stringify(stale, null, 2), "utf8");
+    reg = await FsToolRegistry.open(dir);
+    assert.ok(await reg.get("alpha")); // still discoverable
+    assert.equal(await reg.getApproval("alpha"), null); // approval not bound
+    const report = reg.integrityReport();
+    assert.equal(report.length, 1);
+    const issue = report[0];
+    assert.ok(issue);
+    assert.equal(issue.status, INTEGRITY_STATUS.needsReview);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("load logs a warning for each integrity issue", async () => {
+  const dir = await tmp();
+  const original = process.stderr.write.bind(process.stderr);
+  let captured = "";
+  (process.stderr as unknown as { write: (s: string) => boolean }).write = (s: string) => {
+    captured += s;
+    return true;
+  };
+  try {
+    let reg = await FsToolRegistry.open(dir);
+    const t = sample("alpha");
+    await reg.save(t, makeConsistentApproval(t));
+    await writeFile(join(dir, "alpha", "tool.ts"), "export async function run(i){return 0;}", "utf8");
+    reg = await FsToolRegistry.open(dir);
+    assert.match(captured, /warn:/);
+    assert.match(captured, /alpha/);
+  } finally {
+    (process.stderr as unknown as { write: typeof original }).write = original;
     await rm(dir, { recursive: true, force: true });
   }
 });
