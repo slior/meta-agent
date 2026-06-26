@@ -122,6 +122,8 @@ The shared domain model. All other modules depend on these types.
 | `ToolRegistry` | [`tool-registry.ts`](../packages/core/src/registry/tool-registry.ts) | The persistence contract. All tool read and write operations go through this interface; the agent loop and factory depend on it without knowing how tools are stored. |
 | `FsToolRegistry` | [`fs-registry.ts`](../packages/core/src/registry/fs-registry.ts) | The filesystem-backed registry. Stores each tool in its own subdirectory and writes files atomically so a partial save cannot corrupt an existing tool. |
 
+- `registry/integrity.ts` — pure content/approval hash verification used at the registry's load/save boundary; depends only on `hash.ts` and `types.ts` (no I/O, no TTY).
+
 **Disk layout per tool** (`tools/<name>/`):
 - Atomic/composite: `manifest.json` + `tool.ts` + `approval.json`
 - Workflow: `manifest.json` + `workflow.json` + `approval.json`

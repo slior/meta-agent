@@ -224,6 +224,23 @@ tools/
     approval.json   # who approved, when, which hash, any edits applied
 ```
 
+### 4.7a Persistence integrity boundary
+
+The approval hash only means something if the registry re-derives it from disk. On load and save, `FsToolRegistry` calls `verifyToolIntegrity(body, manifest, approval)` (see `packages/core/src/registry/integrity.ts`), which checks two links:
+
+- **Link A — manifest ⇄ body:** `manifest.hash` must equal `hashTool(body, manifestSansHash)`, where `body` is `tool.ts` (atomic/composite) or `workflow.json` (workflow).
+- **Link B — approval ⇄ manifest:** an approval record must exist with `approval.hash === manifest.hash`.
+
+Reactions:
+
+- **Link A fails → quarantine.** The entry is not loaded into the usable cache (undiscoverable, unexecutable). The manifest is untrustworthy, so its declared risk tier is not trusted either. This applies even under `yolo`, because it happens at load before the cache exists.
+- **Link B fails → needs review.** The content is authentic but unapproved; the entry loads but its approval is treated as `null`, so `checkExecution` must prompt before any execution and can never auto-approve it via the low tier, session cache, or always-approve. This also closes the hole where a low-tier tool with no `approval.json` ran with zero prompts. Under `yolo`, needs-review tools still run (yolo accepts running unapproved authentic code; it does not accept running corrupted tools).
+- **save** throws `RegistryIntegrityError` before writing if the tool it is asked to persist is not self-consistent, so the registry can never write a broken entry.
+
+Every quarantine/needs-review event is both recorded (queryable via `registry.integrityReport()`) and logged to stderr (`registryLogWarn`); the CLI prints a summary at startup.
+
+Out of scope here: durable re-approval of a needs-review tool (it re-prompts every execution until properly re-approved; see L9), JSON-schema shape validation of manifests/approvals (M2), and atomic multi-file writes (M3).
+
 ### 4.8 Why this shape
 
 - Emitting a `ToolDraft` as a **structured meta-tool call** (not free-form chat) means validation and retry are mechanical, and the trace log is clean.
@@ -729,11 +746,12 @@ The `core` package must not import from `cli`. TypeScript project references enf
 
 ## 10. Testing, Validation, and Error Handling
 
-### 10.1 Three layers of validation, in firing order
+### 10.1 Validation layers, in firing order
 
 1. **Static (pre-smoke-test):** schema parses, name uniqueness, declared deps match `invokeTool` call sites, imports conform to declared permissions, no banned patterns (`eval`, `Function()`, raw `child_process`).
 2. **Smoke test (pre-Gate-1):** draft runs in the sandbox against its own `smokeTestInput`. Passes only if the result matches `outputShape`. Failures loop back to the LLM for repair (bounded).
 3. **Runtime (every invocation):** input matches `inputSchema`, output matches `outputShape`, no permission breach, within time/memory/output limits.
+4. **Persistence (registry load/save):** recompute the content hash and verify the approval binding when durable state enters or leaves memory (see §4.7a).
 
 ### 10.2 Error surfacing to the LLM
 
@@ -899,6 +917,17 @@ This section records every meaningful choice made during design and what alterna
 
 **Why chosen:** one cheap, high-signal guard against tool duplication; everything else stays guidance.
 
+### 11.13 Registry integrity verification
+
+**Chosen:** Verify content/approval hashes inside `FsToolRegistry` (on load and save), backed by a standalone, I/O-free `registry/integrity.ts` module. Quarantine tampered entries; treat unbound-approval entries as needs-review; throw on inconsistent saves.
+
+**Considered:**
+
+- *A `VerifyingToolRegistry` decorator* wrapping any `ToolRegistry` — makes integrity reusable across registry backends (SQLite, remote). Deferred because the cache and quarantine-at-load semantics live where files are read, so a decorator would double-read files or require the inner registry to expose raw bytes. See §12.
+- *Lazy verify-at-read* — rejected: conflicts with quarantine-removes-from-cache and repeats hashing on every read.
+
+**Why chosen:** smallest change that closes the H1 gap, centralizes the check where disk state enters memory, and reuses the existing `approval === null` seam. Keeping the verification core in its own module means the decorator upgrade (§12) is a cheap lift later — POC simplicity now, clean evolution path preserved.
+
 ---
 
 ## 12. Future Extensions
@@ -914,6 +943,7 @@ Listed here so the abstraction seams are justified by concrete, anticipated upgr
 7. **Semantic versioning.** If registries are shared across machines/users, hash-pinning stops being sufficient; a semver field plus compatibility rules would be the next step.
 8. **Streaming tool output.** Some tools (log tailers, watchers) benefit from incremental output. Would require extending the JSON-RPC protocol between runner and parent, and exposing a streaming path to the LLM via tool-result deltas.
 9. **Replacing the approval TUI with a web UI or IDE extension.** Implements the same `ApprovalPolicy` interface; no core changes.
+10. **`VerifyingToolRegistry` decorator.** Lift the integrity core (`registry/integrity.ts`) into a registry decorator that wraps any `ToolRegistry` implementation, so content/approval verification, quarantine, and needs-review handling apply uniformly to filesystem, SQLite, or remote backends without per-implementation reimplementation. The verification function is already backend-agnostic; the decorator only needs raw-body access from the wrapped registry.
 
 ---
 
