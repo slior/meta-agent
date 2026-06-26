@@ -210,3 +210,41 @@ test("load logs a warning for each integrity issue", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("workflow save/reopen roundtrip preserves minified body bytes", async () => {
+  const dir = await tmp();
+  const workflowBody = JSON.stringify({
+    schemaVersion: 1,
+    name: "wf",
+    description: "d",
+    goal: "g",
+    inputs: [],
+    steps: [],
+    return: null,
+  });
+  const tool = makeConsistentTool(
+    {
+      name: "wf",
+      description: "d",
+      rationale: "r",
+      inputSchema: { type: "object" },
+      outputShape: { type: "object" },
+      permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+      dependencies: [],
+      limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
+      createdAt: "2026-01-01T00:00:00Z",
+      kind: "workflow",
+    },
+    workflowBody,
+  );
+  try {
+    let reg = await FsToolRegistry.open(dir);
+    await reg.save(tool, makeConsistentApproval(tool));
+    reg = await FsToolRegistry.open(dir);
+    assert.equal(reg.integrityReport().length, 0);
+    assert.ok(await reg.getWorkflow("wf"));
+    assert.ok(await reg.get("wf"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

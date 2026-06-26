@@ -297,10 +297,9 @@ export class FsToolRegistry implements ToolRegistry {
     await writeFile(join(sub, "approval.json"), JSON.stringify(approval, null, 2), "utf8");
     
     if (tool.manifest.kind === TOOL_KIND.workflow) {
-      // For workflow tools, extract workflow from the code field (JSON serialized)
-      // The workflow IR is stored in the code field temporarily during creation
+      // Write tool.code verbatim so on-disk bytes match what verifyToolIntegrity hashed.
       const workflow = JSON.parse(tool.code) as Workflow;
-      await writeFile(join(sub, "workflow.json"), JSON.stringify(workflow, null, 2), "utf8");
+      await writeFile(join(sub, "workflow.json"), tool.code, "utf8");
       this.workflows.set(tool.manifest.name, workflow);
       this.cache.set(tool.manifest.name, { tool: { manifest: tool.manifest, code: "" }, approval });
     } else {
