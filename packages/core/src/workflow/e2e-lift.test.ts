@@ -18,13 +18,14 @@ import { liftFromTrace } from "./lift.ts";
 import { validate } from "./validator.ts";
 import { renderLiterate } from "./renderer.ts";
 import { toolError } from "../errors.ts";
-import type { Tool, ApprovalRecord, ToolResult } from "../types.ts";
+import type { ToolResult } from "../types.ts";
 import { ARG_KIND } from "./types.ts";
 import { parameterize } from "./parameterize.ts";
+import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
 
-// Simple atomic tool: doubles a number
-const DOUBLE_TOOL: Tool = {
-  manifest: {
+const DOUBLE_CODE = `export async function run(input) { return input.n * 2; }`;
+const DOUBLE_TOOL = makeConsistentTool(
+  {
     name: "double",
     description: "Doubles a number",
     rationale: "Basic math",
@@ -33,16 +34,15 @@ const DOUBLE_TOOL: Tool = {
     permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
     dependencies: [],
     limits: { timeoutMs: 5000, maxOldSpaceSizeMb: 64 },
-    hash: "sha256:double",
     createdAt: "2026-01-01T00:00:00Z",
     kind: "atomic",
   },
-  code: `export async function run(input) { return input.n * 2; }`,
-};
+  DOUBLE_CODE,
+);
 
-// Simple atomic tool: adds two numbers
-const ADD_TOOL: Tool = {
-  manifest: {
+const ADD_CODE = `export async function run(input) { return input.a + input.b; }`;
+const ADD_TOOL = makeConsistentTool(
+  {
     name: "add",
     description: "Adds two numbers",
     rationale: "Basic math",
@@ -51,16 +51,15 @@ const ADD_TOOL: Tool = {
     permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
     dependencies: [],
     limits: { timeoutMs: 5000, maxOldSpaceSizeMb: 64 },
-    hash: "sha256:add",
     createdAt: "2026-01-01T00:00:00Z",
     kind: "atomic",
   },
-  code: `export async function run(input) { return input.a + input.b; }`,
-};
+  ADD_CODE,
+);
 
-// Simple atomic tool: squares a number
-const SQUARE_TOOL: Tool = {
-  manifest: {
+const SQUARE_CODE = `export async function run(input) { return input.n * input.n; }`;
+const SQUARE_TOOL = makeConsistentTool(
+  {
     name: "square",
     description: "Squares a number",
     rationale: "Basic math",
@@ -69,19 +68,15 @@ const SQUARE_TOOL: Tool = {
     permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
     dependencies: [],
     limits: { timeoutMs: 5000, maxOldSpaceSizeMb: 64 },
-    hash: "sha256:square",
     createdAt: "2026-01-01T00:00:00Z",
     kind: "atomic",
   },
-  code: `export async function run(input) { return input.n * input.n; }`,
-};
+  SQUARE_CODE,
+);
 
-const APPROVAL: ApprovalRecord = {
-  hash: "sha256:approval",
-  approvedAt: "2026-01-01T00:00:00Z",
-  approvedBy: "test",
-  alwaysApprove: true,
-};
+function saveWithApproval(registry: Awaited<ReturnType<typeof FsToolRegistry.open>>, tool: ReturnType<typeof makeConsistentTool>) {
+  return registry.save(tool, makeConsistentApproval(tool, { alwaysApprove: true }));
+}
 
 async function setupTestEnv() {
   const dir = await mkdtemp(join(tmpdir(), "workflow-e2e-"));
@@ -95,9 +90,9 @@ test("E2E: lift trace to workflow and execute with parity", async () => {
   const { dir, registry, tracer, sandbox } = await setupTestEnv();
   try {
     // Register atomic tools
-    await registry.save(DOUBLE_TOOL, APPROVAL);
-    await registry.save(ADD_TOOL, APPROVAL);
-    await registry.save(SQUARE_TOOL, APPROVAL);
+    await saveWithApproval(registry, DOUBLE_TOOL);
+    await saveWithApproval(registry, ADD_TOOL);
+    await saveWithApproval(registry, SQUARE_TOOL);
 
     // Simulate a session: invoke tools and collect results
     // Session: double(5) → add(10, 3) → square(13) = 169
@@ -130,7 +125,7 @@ test("E2E: lift trace to workflow and execute with parity", async () => {
     console.log(`Final result: ${expectedResult}`);
 
     // Build toolsByName for lift
-    const toolsByName: Record<string, Tool> = {
+    const toolsByName: Record<string, ReturnType<typeof makeConsistentTool>> = {
       double: DOUBLE_TOOL,
       add: ADD_TOOL,
       square: SQUARE_TOOL,
@@ -217,13 +212,10 @@ test("E2E: lift trace to workflow and execute with parity", async () => {
     assert.equal(step1B.kind, ARG_KIND.literal);
 
     // Save the workflow tool to registry (demonstrating persistence)
-    const workflowTool = {
-      manifest: { ...manifest, hash: "" },
-      code: JSON.stringify(workflow, null, 2),
-    };
-    workflowTool.manifest.hash = "sha256:" + "test-hash"; // Simplified for test
-
-    await registry.save(workflowTool, APPROVAL);
+    const workflowBody = JSON.stringify(workflow, null, 2);
+    const { hash: _drop, ...manifestSansHash } = manifest;
+    const workflowTool = makeConsistentTool(manifestSansHash, workflowBody);
+    await registry.save(workflowTool, makeConsistentApproval(workflowTool, { alwaysApprove: true }));
 
     // Verify registry can load it back
     const loadedWf = await registry.getWorkflow("double-add-square");
@@ -244,8 +236,8 @@ test("E2E: lift with dataflow dependencies", async () => {
   const { dir, registry, tracer, sandbox } = await setupTestEnv();
   try {
     // Register tools
-    await registry.save(DOUBLE_TOOL, APPROVAL);
-    await registry.save(ADD_TOOL, APPROVAL);
+    await saveWithApproval(registry, DOUBLE_TOOL);
+    await saveWithApproval(registry, ADD_TOOL);
 
     // Session: double(7) → add(14, 5) = 19
     // The '14' in step 2 is the result of step 1
@@ -306,7 +298,7 @@ test("E2E: lift with dataflow dependencies", async () => {
 test("E2E: parameterized workflow runs with caller inputs and defaults", async () => {
   const { dir, registry, tracer, sandbox } = await setupTestEnv();
   try {
-    await registry.save(ADD_TOOL, APPROVAL);
+    await saveWithApproval(registry, ADD_TOOL);
 
     const invocations = [{ name: "add", args: { a: 2, b: 3 }, ok: true as const, value: 5 }];
     const lifted = liftFromTrace({ slice: invocations, name: "add-wf", description: "", goal: "", toolsByName: { add: ADD_TOOL } });

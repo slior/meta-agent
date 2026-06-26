@@ -11,24 +11,27 @@ import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
-import { hashTool } from "../hash.ts";
 import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/LLMProvider.ts";
 import { META_FN } from "./meta-tools.ts";
-import type { ApprovalRecord, Tool } from "../types.ts";
+import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
 
-function toolWith(name: string, code: string): { tool: Tool; approval: ApprovalRecord } {
-  const manifestNoHash = {
-    name, description: `desc ${name}`, rationale: "r",
-    inputSchema: { type: "object" as const }, outputShape: {},
-    permissions: { fsRead: [], fsWrite: [], net: "none" as const, netAllowlist: [], env: [] },
-    dependencies: [], limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
-    createdAt: "2026-04-21T00:00:00Z", kind: "atomic" as const,
-  };
-  const hash = hashTool(code, manifestNoHash);
-  return {
-    tool: { code, manifest: { ...manifestNoHash, hash } },
-    approval: { hash, approvedAt: "2026-04-21T00:00:00Z", approvedBy: "test", alwaysApprove: true },
-  };
+function toolWith(name: string, code: string) {
+  const tool = makeConsistentTool(
+    {
+      name,
+      description: `desc ${name}`,
+      rationale: "r",
+      inputSchema: { type: "object" },
+      outputShape: {},
+      permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+      dependencies: [],
+      limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
+      createdAt: "2026-04-21T00:00:00Z",
+      kind: "atomic",
+    },
+    code,
+  );
+  return { tool, approval: makeConsistentApproval(tool, { alwaysApprove: true }) };
 }
 
 function asst(content: string | null, toolCalls?: Array<{ id: string; name: string; args: unknown }>): ChatResponse {

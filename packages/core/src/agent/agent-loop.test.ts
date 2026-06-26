@@ -13,14 +13,13 @@ import { Tracer } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
 import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/LLMProvider.ts";
 import { META_FN } from "./meta-tools.ts";
-import type { ApprovalRecord, Tool } from "../types.ts";
+import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
 
-const SAMPLE_HASH = "sha256:" + "a".repeat(64);
+const SAMPLE_BODY = "export async function run(i){return i;}";
 
-function sampleTool(name: string): Tool {
-  return {
-    code: "export async function run(i){return i;}",
-    manifest: {
+function sampleTool(name: string) {
+  return makeConsistentTool(
+    {
       name,
       description: `desc of ${name}`,
       rationale: "r",
@@ -29,19 +28,12 @@ function sampleTool(name: string): Tool {
       permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
       dependencies: [],
       limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
-      hash: SAMPLE_HASH,
       createdAt: "2026-04-21T00:00:00Z",
       kind: "atomic",
     },
-  };
+    SAMPLE_BODY,
+  );
 }
-
-const sampleApproval: ApprovalRecord = {
-  hash: SAMPLE_HASH,
-  approvedAt: "2026-04-21T00:00:00Z",
-  approvedBy: "test",
-  alwaysApprove: false,
-};
 
 function asst(content: string | null, toolCalls?: Array<{ id: string; name: string; args: unknown }>): ChatResponse {
   return {
@@ -123,7 +115,8 @@ test("agent: find_tool with hits does not inject empty-find recovery", async () 
   const dir = await mkdtemp(join(tmpdir(), "agent-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(sampleTool("alpha"), sampleApproval);
+    const alpha = sampleTool("alpha");
+    await registry.save(alpha, makeConsistentApproval(alpha));
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
@@ -301,11 +294,9 @@ test("agent: empty find_tool injects recovery user before next chat", async () =
 
 // ─── workflow inputSchema validation tests ────────────────────────────────────
 
-const DOUBLE_HASH = "sha256:" + "d".repeat(64);
-const WF_HASH = "sha256:" + "w".repeat(64);
-
-const DOUBLE_TOOL_FOR_WF: Tool = {
-  manifest: {
+const DOUBLE_CODE = `export async function run(input) { return input.n * 2; }`;
+const DOUBLE_TOOL_FOR_WF = makeConsistentTool(
+  {
     name: "double",
     description: "Doubles a number",
     rationale: "Basic math",
@@ -314,22 +305,31 @@ const DOUBLE_TOOL_FOR_WF: Tool = {
     permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
     dependencies: [],
     limits: { timeoutMs: 5000, maxOldSpaceSizeMb: 64 },
-    hash: DOUBLE_HASH,
     createdAt: "2026-01-01T00:00:00Z",
     kind: "atomic",
   },
-  code: `export async function run(input) { return input.n * 2; }`,
-};
+  DOUBLE_CODE,
+);
 
-const DOUBLE_APPROVAL_FOR_WF: ApprovalRecord = {
-  hash: DOUBLE_HASH,
-  approvedAt: "2026-01-01T00:00:00Z",
-  approvedBy: "test",
-  alwaysApprove: false,
-};
-
-const FETCH_AND_DOUBLE_TOOL: Tool = {
-  manifest: {
+const FETCH_AND_DOUBLE_BODY = JSON.stringify({
+  schemaVersion: 1,
+  name: "fetch-and-double",
+  description: "Test workflow",
+  goal: "test",
+  inputs: [{ name: "url", schema: { type: "string" }, required: true }],
+  steps: [
+    {
+      kind: "tool_call",
+      label: "step1",
+      tool: "double",
+      arguments: { n: { kind: "literal", value: 2 } },
+      resultBinding: "result",
+    },
+  ],
+  return: { source: { kind: "symref", ref: "result" } },
+});
+const FETCH_AND_DOUBLE_TOOL = makeConsistentTool(
+  {
     name: "fetch-and-double",
     description: "Test workflow with required url parameter",
     rationale: "test workflow",
@@ -343,42 +343,18 @@ const FETCH_AND_DOUBLE_TOOL: Tool = {
     permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
     dependencies: ["double"],
     limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
-    hash: WF_HASH,
     createdAt: "2026-01-01T00:00:00Z",
     kind: "workflow",
   },
-  code: JSON.stringify({
-    schemaVersion: 1,
-    name: "fetch-and-double",
-    description: "Test workflow",
-    goal: "test",
-    inputs: [{ name: "url", schema: { type: "string" }, required: true }],
-    steps: [
-      {
-        kind: "tool_call",
-        label: "step1",
-        tool: "double",
-        arguments: { n: { kind: "literal", value: 2 } },
-        resultBinding: "result",
-      },
-    ],
-    return: { source: { kind: "symref", ref: "result" } },
-  }),
-};
-
-const FETCH_AND_DOUBLE_APPROVAL: ApprovalRecord = {
-  hash: WF_HASH,
-  approvedAt: "2026-01-01T00:00:00Z",
-  approvedBy: "test",
-  alwaysApprove: false,
-};
+  FETCH_AND_DOUBLE_BODY,
+);
 
 test("agent: workflow inputSchema — missing required field yields schema_violation", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
-    await registry.save(FETCH_AND_DOUBLE_TOOL, FETCH_AND_DOUBLE_APPROVAL);
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
@@ -407,8 +383,8 @@ test("agent: workflow inputSchema — unknown key rejected when additionalProper
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
-    await registry.save(FETCH_AND_DOUBLE_TOOL, FETCH_AND_DOUBLE_APPROVAL);
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
@@ -437,8 +413,8 @@ test("agent: workflow inputSchema — valid input dispatches to executor success
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
-    await registry.save(FETCH_AND_DOUBLE_TOOL, FETCH_AND_DOUBLE_APPROVAL);
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
@@ -462,10 +438,25 @@ test("agent: workflow inputSchema — valid input dispatches to executor success
   }
 });
 
-const CLOSED_WF_HASH = "sha256:" + "c".repeat(64);
-
-const CLOSED_WF_TOOL: Tool = {
-  manifest: {
+const CLOSED_WF_BODY = JSON.stringify({
+  schemaVersion: 1,
+  name: "closed-workflow",
+  description: "Test closed workflow",
+  goal: "test",
+  inputs: [],
+  steps: [
+    {
+      kind: "tool_call",
+      label: "step1",
+      tool: "double",
+      arguments: { n: { kind: "literal", value: 3 } },
+      resultBinding: "result",
+    },
+  ],
+  return: { source: { kind: "symref", ref: "result" } },
+});
+const CLOSED_WF_TOOL = makeConsistentTool(
+  {
     name: "closed-workflow",
     description: "Test workflow with no declared parameters",
     rationale: "test closed workflow",
@@ -474,42 +465,18 @@ const CLOSED_WF_TOOL: Tool = {
     permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
     dependencies: ["double"],
     limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
-    hash: CLOSED_WF_HASH,
     createdAt: "2026-01-01T00:00:00Z",
     kind: "workflow",
   },
-  code: JSON.stringify({
-    schemaVersion: 1,
-    name: "closed-workflow",
-    description: "Test closed workflow",
-    goal: "test",
-    inputs: [],
-    steps: [
-      {
-        kind: "tool_call",
-        label: "step1",
-        tool: "double",
-        arguments: { n: { kind: "literal", value: 3 } },
-        resultBinding: "result",
-      },
-    ],
-    return: { source: { kind: "symref", ref: "result" } },
-  }),
-};
-
-const CLOSED_WF_APPROVAL: ApprovalRecord = {
-  hash: CLOSED_WF_HASH,
-  approvedAt: "2026-01-01T00:00:00Z",
-  approvedBy: "test",
-  alwaysApprove: false,
-};
+  CLOSED_WF_BODY,
+);
 
 test("agent: workflow inputSchema — closed workflow (inputSchema: {}) accepts any input", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, DOUBLE_APPROVAL_FOR_WF);
-    await registry.save(CLOSED_WF_TOOL, CLOSED_WF_APPROVAL);
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(CLOSED_WF_TOOL, makeConsistentApproval(CLOSED_WF_TOOL));
     const index = await HybridToolIndex.open(registry);
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };

@@ -10,7 +10,8 @@ import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
 import { APPROVAL_DECISION } from "../approval/interface.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
-import type { Tool, ToolDraft, ApprovalRecord } from "../types.ts";
+import type { Tool, ToolDraft } from "../types.ts";
+import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
 
 const GOOD_DRAFT: ToolDraft = {
   name: "double-int",
@@ -98,8 +99,9 @@ test("factory: rejected by reviewer returns failure", async () => {
   }
 });
 
-const FETCH_TOOL: Tool = {
-  manifest: {
+const FETCH_CODE = `export async function run(i) { return "text"; }`;
+const FETCH_TOOL = makeConsistentTool(
+  {
     name: "fetch-webpage-text",
     description: "Fetches text content from a URL",
     rationale: "HTTP fetch",
@@ -108,15 +110,15 @@ const FETCH_TOOL: Tool = {
     permissions: { fsRead: [], fsWrite: [], net: "allowlist", netAllowlist: ["*"], env: [] },
     dependencies: [],
     limits: { timeoutMs: 10000, maxOldSpaceSizeMb: 64 },
-    hash: "sha256:fetch-webpage-text",
     createdAt: "2026-01-01T00:00:00.000Z",
     kind: "atomic",
   },
-  code: `export async function run(i) { return "text"; }`,
-};
+  FETCH_CODE,
+);
 
-const WRITE_TOOL: Tool = {
-  manifest: {
+const WRITE_CODE = `export async function run(i) { return { written: true }; }`;
+const WRITE_TOOL = makeConsistentTool(
+  {
     name: "write-file-text",
     description: "Writes text content to a file",
     rationale: "File write",
@@ -125,19 +127,11 @@ const WRITE_TOOL: Tool = {
     permissions: { fsRead: [], fsWrite: ["./"], net: "none", netAllowlist: [], env: [] },
     dependencies: [],
     limits: { timeoutMs: 5000, maxOldSpaceSizeMb: 64 },
-    hash: "sha256:write-file-text",
     createdAt: "2026-01-01T00:00:00.000Z",
     kind: "atomic",
   },
-  code: `export async function run(i) { return { written: true }; }`,
-};
-
-const TOOL_APPROVAL: ApprovalRecord = {
-  hash: "sha256:stub",
-  approvedAt: "2026-01-01T00:00:00.000Z",
-  approvedBy: "test",
-  alwaysApprove: false,
-};
+  WRITE_CODE,
+);
 
 describe("createWorkflow and previewWorkflow", () => {
   let wfDir: string;
@@ -147,8 +141,8 @@ describe("createWorkflow and previewWorkflow", () => {
   before(async () => {
     wfDir = await mkdtemp(join(tmpdir(), "fac-wf-"));
     wfRegistry = await FsToolRegistry.open(join(wfDir, "tools"));
-    await wfRegistry.save(FETCH_TOOL, { ...TOOL_APPROVAL, hash: FETCH_TOOL.manifest.hash });
-    await wfRegistry.save(WRITE_TOOL, { ...TOOL_APPROVAL, hash: WRITE_TOOL.manifest.hash });
+    await wfRegistry.save(FETCH_TOOL, makeConsistentApproval(FETCH_TOOL));
+    await wfRegistry.save(WRITE_TOOL, makeConsistentApproval(WRITE_TOOL));
 
     const sandbox = new NodePermissionSandbox({ workspace: wfDir });
     const llm = new MockLLMProvider();
