@@ -24,6 +24,7 @@ Read the target file end-to-end and note:
 | **Numeric literals** | Defaults (`?? 20`), limits, timeouts, lengths—especially repeated or documented in comments. |
 | **Fat loops or run methods** | Sequences that mix I/O, tracing, branching, and mutation in one block; repeated patterns inside loops. |
 | **Consumer drift** | `switch (e.kind)`, tests asserting string `kind`, CLI mappers—must stay aligned with producers. |
+| **Lowercase `as const` member keys** | Protocol objects (`APPROVAL_DECISION`, `GATE1_KIND`, `PERMISSIONS_NET`) whose keys are camelCase/lowercase instead of **SCREAMING_SNAKE**-style uppercase identifiers. |
 | **Repeated anonymous unions** | The same union (e.g. `"a" \| "b" \| null`) appears in a return type and parameter(s), or labels a concept worth naming in docs. |
 
 Skip renaming for **domain prose** (user-visible copy, LLM prompts) unless the goal is to sync names with constants; if in doubt, only substitute where the string is an **identifier**, not natural language.
@@ -33,8 +34,9 @@ Skip renaming for **domain prose** (user-visible copy, LLM prompts) unless the g
 **String families used as API or protocol names**
 
 - Add one `as const` object (or small set of objects) **next to the type or registry they describe**, e.g. chat roles beside `ChatMessage`, tool names beside tool defs, trace kinds beside `TraceEvent`.
+- **Member keys must be UPPERCASE** (e.g. `APPROVE: "approve"`, `CODE: "code"`). Runtime/protocol string **values** stay lowercase when that is the wire format; only the TypeScript property names are uppercase.
 - Derive union types when useful: `export type Foo = (typeof FOO)[keyof typeof FOO]`.
-- Point type members at `typeof CONST.field` so literals cannot drift from values.
+- Point type members at `typeof CONST.FIELD` so literals cannot drift from values.
 - **Export** values that cross package boundaries; re-export from the package **`index`** when CLI or other packages must import them.
 
 **Numeric defaults**
@@ -111,6 +113,7 @@ Every **`export`** in the target file (and any new exports introduced during cle
 ## Anti-patterns (avoid)
 
 - Dumping unrelated strings into one giant enum without ownership.
+- **Lowercase keys** on exported `as const` protocol objects (use `APPROVE`, not `approve`).
 - Exporting constants nobody imports—keep visibility minimal.
 - Extracting methods that only shuffle lines without clarifying data flow.
 - One-word or tag-only JSDoc (`/** foo */`) on exported APIs—use full blocks with `@param` / `@returns` where applicable.
@@ -124,6 +127,7 @@ Copy for the session:
 Code cleanup — target file: ___
 
 - [ ] Protocol/id literals → const object + types aligned
+- [ ] `as const` member keys → UPPERCASE (values unchanged)
 - [ ] Repeated unions → named `export type` + JSDoc, wire signatures
 - [ ] Magic numbers → named module constants
 - [ ] Trace/event kinds → TRACE_KIND_* near Tracer, consumers updated
