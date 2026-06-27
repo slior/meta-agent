@@ -12,7 +12,7 @@ import {
 import type { LlmCapabilityRequest, Sandbox } from "../sandbox/sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
-import { TOOL_CAPABILITY, TOOL_KIND, type ToolResult } from "../types.ts";
+import { TOOL_CAPABILITY, TOOL_KIND, type ApprovalToken, type Tool, type ToolResult } from "../types.ts";
 import {
   TRACE_KIND_EXECUTION_DENIED,
   TRACE_KIND_LLM_SYNTHESIS,
@@ -459,14 +459,18 @@ export class AgentLoop {
     }
   }
 
-   /**
-   * Handles invocation of a non-meta-tool ("user", composite, or workflow tools).
-   * Validates input, requests approval, invokes the tool in sandbox (or executor for workflows), and records invocation/trace.
-   * Updates state for allowed tool invocations.
+  /**
+   * Handles invocation of a non-meta-tool (atomic, composite, or workflow).
+   *
+   * Resolves `$ref` sentinels at depth 0, validates the input schema, then
+   * delegates to {@link runWithApproval} with a tool-kind-specific executor function.
+   * Workflow tools run in-process via {@link WorkflowExecutor}; atomic and composite
+   * tools run in a sandboxed subprocess via {@link Sandbox}.
+   *
    * @param name The name of the tool to invoke.
-   * @param args Tool input arguments (parsed).
-   * @param task Current session context (for invoked tool tracking).
-   * @param depth Recursion depth (in composite or self-invoking tools).
+   * @param args Tool input arguments (parsed, may contain `$ref` sentinels at depth 0).
+   * @param task Current session context (for invoked tool tracking and dedup guards).
+   * @param depth Recursion depth (incremented for each nested composite or workflow step call).
    * @returns ToolResult for this invocation.
    */
   private async dispatchTool(name: string, args: unknown, task: Task, depth: number): Promise<ToolResult> {
@@ -484,28 +488,60 @@ export class AgentLoop {
       effectiveArgs = resolved.value;
     }
 
-    // Workflow tools run in-process via WorkflowExecutor
+    const schema = tool.manifest.inputSchema as Record<string, unknown>;
+    const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
+    if (!this.ajv.validate(schema, input)) {
+      return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
+    }
+
     if (tool.manifest.kind === TOOL_KIND.WORKFLOW) {
       const wf = await this.opts.registry.getWorkflow(name);
       if (!wf) return toolError("unknown_tool", `workflow '${name}' not found`);
-      const schema = tool.manifest.inputSchema as Record<string, unknown>;
-      const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
-      if (!this.ajv.validate(schema, input)) {
-        return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
-      }
-      const result = await this.executor.run(wf, input as Record<string, unknown>, async (toolName, toolArgs, d) => {
-        return this.dispatchTool(toolName, toolArgs, task, d);
-      }, depth);
-      if (depth === 0) this.storeDepth0Result(name, result);
-      return result;
+      return this.runWithApproval(tool, input, recordArgs, task, depth,
+        (_token) => this.executor.run(
+          wf,
+          input as Record<string, unknown>,
+          (toolName, toolArgs, d) => this.dispatchTool(toolName, toolArgs, task, d),
+          depth,
+        ),
+      );
     }
 
-    const schema = tool.manifest.inputSchema as Record<string, unknown>;
-    const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
+    const wantsLlm = tool.manifest.capabilities?.includes(TOOL_CAPABILITY.LLM) ?? false;
+    return this.runWithApproval(tool, input, recordArgs, task, depth,
+      (token) => this.opts.sandbox.execute(tool, input, token, {
+        depth,
+        onInvokeTool: (subName, subArgs) => this.dispatchTool(subName, subArgs, task, depth + 1),
+        ...(wantsLlm ? { onLLM: (req) => this.runLlmCapability(req) } : {}),
+      }),
+    );
+  }
 
-    const valid = this.ajv.validate(tool.manifest.inputSchema, input);
-    if (!valid) return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
-
+  /**
+   * Shared approval gate, executor, tracer, and notification handler for all tool kinds.
+   *
+   * After schema validation, every tool invocation — atomic, composite, or workflow — runs
+   * this path: `getApproval → checkExecution → reject-or-execute → trace → notify → track`.
+   * The tool-kind-specific execution logic is injected as `executeFn`; it receives the
+   * {@link ApprovalToken} issued by the policy (workflows may ignore it; the sandbox requires it).
+   *
+   * @param tool Registered tool whose manifest drives the approval check.
+   * @param input Validated, coerced invocation arguments.
+   * @param recordArgs Unresolved arguments at depth 0, passed to `onToolInvoked` for lift.
+   * @param task Current session context updated on successful invocation.
+   * @param depth Recursion depth; controls `storeDepth0Result` and `onToolInvoked` shape.
+   * @param executeFn Tool-kind executor: sandbox for code tools, WorkflowExecutor for workflows.
+   * @returns ToolResult from the executor, or a rejection error if the policy denies.
+   */
+  private async runWithApproval(
+    tool: Tool,
+    input: unknown,
+    recordArgs: unknown,
+    task: Task,
+    depth: number,
+    executeFn: (token: ApprovalToken) => Promise<ToolResult>,
+  ): Promise<ToolResult> {
+    const name = tool.manifest.name;
     const approval = await this.opts.registry.getApproval(name);
     const decision = await this.opts.approval.checkExecution(tool, input, approval);
     if (decision.decision === APPROVAL_DECISION.REJECT) {
@@ -513,18 +549,17 @@ export class AgentLoop {
       return toolError("rejected_by_user", decision.reason);
     }
 
-    const wantsLlm = tool.manifest.capabilities?.includes(TOOL_CAPABILITY.LLM) ?? false;
     const started = Date.now();
-    const result = await this.opts.sandbox.execute(tool, input, decision.token, {
-      depth,
-      onInvokeTool: (subName, subArgs) => this.dispatchTool(subName, subArgs, task, depth + 1),
-      ...(wantsLlm ? { onLLM: (req) => this.runLlmCapability(req) } : {}),
-    });
+    const result = await executeFn(decision.token);
     const durationMs = Date.now() - started;
     this.opts.tracer.log(TRACE_KIND_TOOL_INVOKED, { name, duration: durationMs, ok: result.ok });
     if (depth === 0) {
       const binding = this.storeDepth0Result(name, result);
-      this.opts.onToolInvoked?.({ name, args: recordArgs, ok: result.ok, durationMs, value: result.ok ? result.value : undefined, ...(binding !== null ? { binding } : {}) });
+      this.opts.onToolInvoked?.({
+        name, args: recordArgs, ok: result.ok, durationMs,
+        value: result.ok ? result.value : undefined,
+        ...(binding !== null ? { binding } : {}),
+      });
     } else {
       this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs, value: result.ok ? result.value : undefined });
     }

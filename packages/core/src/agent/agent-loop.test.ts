@@ -9,11 +9,13 @@ import { FsToolRegistry } from "../registry/fs-registry.ts";
 import { HybridToolIndex } from "../index-store/hybrid-index.ts";
 import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
-import { Tracer } from "../tracer.ts";
+import { APPROVAL_DECISION, type ApprovalPolicy, type Gate1ReviewPayload } from "../approval/interface.ts";
+import { TRACE_KIND_EXECUTION_DENIED, TRACE_KIND_TOOL_INVOKED, Tracer, type TraceEvent } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
 import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/LLMProvider.ts";
 import { META_FN } from "./meta-tools.ts";
 import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
+import type { ApprovalRecord, Tool } from "../types.ts";
 
 const SAMPLE_BODY = "export async function run(i){return i;}";
 
@@ -494,6 +496,168 @@ test("agent: workflow inputSchema — closed workflow (inputSchema: {}) accepts 
     assert.ok(toolMsg, "expected a tool message in the second chat call");
     const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
     assert.equal(parsed.ok, true, `expected ok:true but got: ${JSON.stringify(parsed)}`);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── workflow approval gate tests ─────────────────────────────────────────────
+
+/**
+ * Builds a mock ApprovalPolicy whose `checkExecution` records every tool name it
+ * was called with, and optionally rejects a specific tool by name.
+ */
+function makeTrackingPolicy(rejectName?: string): { policy: ApprovalPolicy; checkedNames: string[] } {
+  const checkedNames: string[] = [];
+  const policy: ApprovalPolicy = {
+    yolo: false,
+    reviewDraft: async (_payload: Gate1ReviewPayload) => { throw new Error("reviewDraft should not be called"); },
+    async checkExecution(tool: Tool, _args: unknown, _approval: ApprovalRecord | null) {
+      checkedNames.push(tool.manifest.name);
+      if (tool.manifest.name === rejectName) {
+        return { decision: APPROVAL_DECISION.REJECT, reason: "test rejection" };
+      }
+      return { decision: APPROVAL_DECISION.APPROVE, token: "test-token", cacheForSession: false };
+    },
+  };
+  return { policy, checkedNames };
+}
+
+test("agent: workflow wrapper checkExecution is called before executor runs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const { policy, checkedNames } = makeTrackingPolicy();
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval: policy, factory, tracer });
+    await loop.run("run the workflow");
+    // The workflow wrapper must be checked first, then the step tool.
+    assert.ok(checkedNames.includes("fetch-and-double"), "checkExecution must be called for the workflow wrapper");
+    assert.ok(checkedNames.includes("double"), "checkExecution must be called for the step tool");
+    assert.equal(checkedNames[0], "fetch-and-double", "workflow wrapper approval checked before step tools");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: rejected workflow wrapper returns rejected_by_user without running steps", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const { policy, checkedNames } = makeTrackingPolicy("fetch-and-double");
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval: policy, factory, tracer });
+    await loop.run("run the workflow");
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const toolMsg = secondReq.messages.find((m) => m.role === CHAT_ROLE.tool);
+    assert.ok(toolMsg, "expected a tool message in the second chat call");
+    const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.kind, "rejected_by_user");
+    // The step tool must never have been checked — executor never ran.
+    assert.ok(!checkedNames.includes("double"), "step tool must not be checked when wrapper is rejected");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: workflow wrapper emits tool-invoked and not execution-denied on success", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const captured: TraceEvent[] = [];
+    const tracer = await Tracer.open(join(dir, "traces"), "s", { observers: [(e) => captured.push(e)] });
+    const { policy } = makeTrackingPolicy();
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval: policy, factory, tracer });
+    await loop.run("run the workflow");
+    const wrapperInvoked = captured.find(
+      (e) => e.kind === TRACE_KIND_TOOL_INVOKED && e.data["name"] === "fetch-and-double",
+    );
+    assert.ok(wrapperInvoked, "tool-invoked trace event must be emitted for the workflow wrapper");
+    const deniedEvents = captured.filter((e) => e.kind === TRACE_KIND_EXECUTION_DENIED);
+    assert.equal(deniedEvents.length, 0, "no execution-denied events on a successful run");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: rejected workflow wrapper emits execution-denied trace event", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const captured: TraceEvent[] = [];
+    const tracer = await Tracer.open(join(dir, "traces"), "s", { observers: [(e) => captured.push(e)] });
+    const { policy } = makeTrackingPolicy("fetch-and-double");
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({ llm, registry, index, sandbox, approval: policy, factory, tracer });
+    await loop.run("run the workflow");
+    const denied = captured.find(
+      (e) => e.kind === TRACE_KIND_EXECUTION_DENIED && e.data["name"] === "fetch-and-double",
+    );
+    assert.ok(denied, "execution-denied trace event must be emitted when workflow wrapper is rejected");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("agent: workflow wrapper calls onToolInvoked at depth 0 on success", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    const index = await HybridToolIndex.open(registry);
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const { policy } = makeTrackingPolicy();
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const invokedNames: string[] = [];
+    const loop = new AgentLoop({
+      llm, registry, index, sandbox, approval: policy, factory, tracer,
+      onToolInvoked: (ev) => invokedNames.push(ev.name),
+    });
+    await loop.run("run the workflow");
+    assert.ok(invokedNames.includes("fetch-and-double"), "onToolInvoked must fire for the workflow wrapper");
     await tracer.close();
   } finally {
     await rm(dir, { recursive: true, force: true });
