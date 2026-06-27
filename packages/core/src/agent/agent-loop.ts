@@ -485,7 +485,7 @@ export class AgentLoop {
     }
 
     // Workflow tools run in-process via WorkflowExecutor
-    if (tool.manifest.kind === TOOL_KIND.workflow) {
+    if (tool.manifest.kind === TOOL_KIND.WORKFLOW) {
       const wf = await this.opts.registry.getWorkflow(name);
       if (!wf) return toolError("unknown_tool", `workflow '${name}' not found`);
       const schema = tool.manifest.inputSchema as Record<string, unknown>;
@@ -508,12 +508,12 @@ export class AgentLoop {
 
     const approval = await this.opts.registry.getApproval(name);
     const decision = await this.opts.approval.checkExecution(tool, input, approval);
-    if (decision.decision === APPROVAL_DECISION.reject) {
+    if (decision.decision === APPROVAL_DECISION.REJECT) {
       this.opts.tracer.log(TRACE_KIND_EXECUTION_DENIED, { name, reason: decision.reason });
       return toolError("rejected_by_user", decision.reason);
     }
 
-    const wantsLlm = tool.manifest.capabilities?.includes(TOOL_CAPABILITY.llm) ?? false;
+    const wantsLlm = tool.manifest.capabilities?.includes(TOOL_CAPABILITY.LLM) ?? false;
     const started = Date.now();
     const result = await this.opts.sandbox.execute(tool, input, decision.token, {
       depth,

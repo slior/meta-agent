@@ -7,12 +7,15 @@ export const APPROVAL_CHOICE_KEY = {
   alwaysApprove: "A",
   sessionApprove: "s",
   reject: "r",
+  /** Gate 1 workflow-only: edit name and description before approving. */
+  editMeta: "e",
 } as const;
 
 const CHOICE_SEPARATOR = " / ";
 const CHOICE_PROMPT_SUFFIX = "? ";
 
 const GATE1_HEADER = "GATE 1: Review new tool";
+const GATE1_WORKFLOW_HEADER = "GATE 1: Review new workflow";
 const GATE23_HEADER_PREFIX = "GATE 2/3:";
 
 function choiceApprove(key: string, suffix: string, bold = false): string {
@@ -85,6 +88,34 @@ export function formatGate1ChoicePrompt(): string {
     choiceApprove(APPROVAL_CHOICE_KEY.approve, "pprove"),
     CHOICE_SEPARATOR,
     choiceApprove(APPROVAL_CHOICE_KEY.alwaysApprove, "lways-approve", true),
+    CHOICE_SEPARATOR,
+    choiceReject("eject"),
+    CHOICE_PROMPT_SUFFIX,
+  ].join("")}`;
+}
+
+/**
+ * Header line for Gate 1 workflow review.
+ *
+ * @returns ANSI-colored section header for stderr/console output.
+ */
+export function formatGate1WorkflowHeader(): string {
+  return theme.progressLabel(`\n=== ${GATE1_WORKFLOW_HEADER} ===`);
+}
+
+/**
+ * Choice prompt for Gate 1 workflow review.
+ * Includes an [e]dit name/description option in addition to the standard choices.
+ *
+ * @returns Colored prompt listing approve, always-approve, edit, and reject keys.
+ */
+export function formatGate1WorkflowChoicePrompt(): string {
+  return `\n${[
+    choiceApprove(APPROVAL_CHOICE_KEY.approve, "pprove"),
+    CHOICE_SEPARATOR,
+    choiceApprove(APPROVAL_CHOICE_KEY.alwaysApprove, "lways-approve", true),
+    CHOICE_SEPARATOR,
+    theme.progressLabel(`[${APPROVAL_CHOICE_KEY.editMeta}]`) + "dit name/desc",
     CHOICE_SEPARATOR,
     choiceReject("eject"),
     CHOICE_PROMPT_SUFFIX,

@@ -12,7 +12,7 @@ const BASE = {
 } as const;
 
 test("known capabilities include llm", () => {
-  assert.equal(TOOL_CAPABILITY.llm, "llm");
+  assert.equal(TOOL_CAPABILITY.LLM, "llm");
   assert.ok(KNOWN_TOOL_CAPABILITIES.has("llm"));
 });
 

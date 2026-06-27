@@ -11,10 +11,10 @@ test("llm_generate is atomic, declares llm capability, no net/env, taint-labeled
   const t = buildLLMGenerateTool();
   assert.equal(t.manifest.name, LLM_GENERATE_NAME);
   assert.equal(t.manifest.kind, "atomic");
-  assert.deepEqual(t.manifest.capabilities, [TOOL_CAPABILITY.llm]);
+  assert.deepEqual(t.manifest.capabilities, [TOOL_CAPABILITY.LLM]);
   assert.equal(t.manifest.permissions.net, "none");
   assert.deepEqual(t.manifest.permissions.env, []);
-  assert.deepEqual(t.manifest.sourceLabels, [SOURCE_LABEL.llmGenerated]);
+  assert.deepEqual(t.manifest.sourceLabels, [SOURCE_LABEL.LLM_GENERATED]);
   assert.match(t.manifest.hash, /^sha256:[0-9a-f]{64}$/);
 });
 

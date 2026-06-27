@@ -1,10 +1,10 @@
-import { APPROVAL_DECISION, type ApprovalPolicy } from "../approval/interface.ts";
+import { APPROVAL_DECISION, GATE1_KIND, type ApprovalPolicy, type WorkflowGate1Payload } from "../approval/interface.ts";
 import { CHAT_ROLE, type LLMProvider } from "../llm/LLMProvider.ts";
 import type { Sandbox } from "../sandbox/sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
-import type { ApprovalRecord, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
+import type { ApprovalRecord, Permissions, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
 import { hashTool } from "../hash.ts";
-import { normalizePermissions } from "../permissions-normalize.ts";
+import { normalizePermissions, unionPermissions } from "../permissions-normalize.ts";
 import { staticValidateDraft, type ValidationResult } from "./static-validator.ts";
 import { atomicPrompt, compositePrompt, repairPrompt, DRAFT_SCHEMA } from "./code-gen-prompts.ts";
 import {
@@ -156,7 +156,7 @@ export class ToolFactory {
    * The workflow is built using only existing, registered tools (no LLM codegeneration).
    * After lifting, optional promotions are applied to convert literals into named workflow inputs,
    * and the inputSchema is re-derived from the resulting workflow inputs.
-   * The workflow is then validated, saved to the registry, and returned.
+   * The workflow is then validated, reviewed at Gate 1, saved to the registry, and returned.
    *
    * No smoke-testing is performed since workflow execution is deterministic over validated steps.
    *
@@ -171,7 +171,7 @@ export class ToolFactory {
       return { ok: false, reason: `lift failed: ${liftResult.errors.map((e) => e.message).join("; ")}` };
     }
 
-    let { workflow, manifest, literalFallbacks } = liftResult;
+    let { workflow, manifest } = liftResult;
 
     if (req.promotions && req.promotions.length > 0) {
       const pr = parameterize(workflow, req.promotions);
@@ -180,35 +180,45 @@ export class ToolFactory {
       manifest = { ...manifest, inputSchema: inputSchemaFromInputs(workflow.inputs) };
     }
 
-    // Validate the lifted workflow
     const validation = await validateWorkflow(workflow, this.opts.registry);
     if (!validation.ok) {
       return { ok: false, reason: `validation failed: ${validation.errors.map((e) => e.message).join("; ")}` };
     }
 
-    const workflowJson = JSON.stringify(workflow, null, 2);
-    const { hash: _liftHash, ...manifestSansHash } = manifest;
-    const tool = this.toolFromManifestAndCode(manifestSansHash, workflowJson);
+    const effectivePermissions = await this.computeEffectivePermissions(workflow);
+    const literateRendering = renderLiterate(workflow);
 
-    console.log("\n--- Lifted Workflow ---");
-    console.log(renderLiterate(workflow));
-    const promotedKeys = new Set((req.promotions ?? []).map((p) => `${p.stepLabel}.${p.argName}`));
-    const remainingFallbacks = literalFallbacks.filter((fb) => !promotedKeys.has(`${fb.stepLabel}.${fb.argName}`));
-    console.log("\n--- Literal Fallbacks ---");
-    if (remainingFallbacks.length === 0) {
-      console.log("(none - all arguments are symrefs)");
-    } else {
-      for (const fb of remainingFallbacks) {
-        console.log(`  ${fb.stepLabel}.${fb.argName}: ${fb.canonicalValue.slice(0, 80)}...`);
-      }
+    const payload: WorkflowGate1Payload = {
+      kind: GATE1_KIND.WORKFLOW,
+      workflow,
+      manifest,
+      effectivePermissions,
+      literateRendering,
+    };
+    const decision = await this.opts.approval.reviewDraft(payload);
+
+    if (decision.kind !== GATE1_KIND.WORKFLOW) {
+      return { ok: false, reason: "unexpected decision kind from Gate 1 review" };
     }
-    console.log("");
+    if (decision.decision === APPROVAL_DECISION.REJECT) {
+      this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, { name: manifest.name, reason: decision.reason });
+      return { ok: false, reason: decision.reason };
+    }
+
+    const finalName = decision.editedName ?? workflow.name;
+    const finalDescription = decision.editedDescription ?? workflow.description;
+    const finalWorkflow = { ...workflow, name: finalName, description: finalDescription };
+    const workflowJson = JSON.stringify(finalWorkflow, null, 2);
+    const { hash: _liftHash, ...manifestSansHash } = manifest;
+    const finalManifest = { ...manifestSansHash, name: finalName, description: finalDescription };
+    const tool = this.toolFromManifestAndCode(finalManifest, workflowJson);
 
     const approval: ApprovalRecord = {
       hash: tool.manifest.hash,
       approvedAt: new Date().toISOString(),
       approvedBy: this.approvedBy,
-      alwaysApprove: false,
+      alwaysApprove: decision.alwaysApprove,
+      ...(decision.notes !== undefined ? { notes: decision.notes } : {}),
     };
 
     await this.opts.registry.save(tool, approval);
@@ -291,15 +301,18 @@ export class ToolFactory {
   }
 
   /**
-   * Runs approval/review for a validated and smoke-tested draft, applies final edits if present,
-   * emits the tool to the registry, and logs creation. Returns the final FactoryOutcome.
+   * Runs Gate 1 approval for a validated and smoke-tested code draft, applies final edits if present,
+   * emits the tool to the registry, and logs creation. Wraps the draft in a `{ kind: GATE1_KIND.CODE }` payload.
    *
    * @param draft The draft (possibly LLM-generated/edited)
    * @param smoke The passing smoke test result
    */
   private async presentAndSave(draft: ToolDraft, smoke: ToolResult): Promise<FactoryOutcome> {
-    const decision = await this.opts.approval.reviewDraft(draft, smoke);
-    if (decision.decision === APPROVAL_DECISION.reject) {
+    const decision = await this.opts.approval.reviewDraft({ kind: GATE1_KIND.CODE, draft, smoke });
+    if (decision.kind !== GATE1_KIND.CODE) {
+      return { ok: false, reason: "unexpected decision kind from Gate 1 review" };
+    }
+    if (decision.decision === APPROVAL_DECISION.REJECT) {
       this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, { name: draft.name, reason: decision.reason });
       return { ok: false, reason: decision.reason };
     }
@@ -315,6 +328,17 @@ export class ToolFactory {
     await this.opts.registry.save(tool, approval);
     this.opts.tracer.log(TRACE_KIND_TOOL_CREATED, { name: tool.manifest.name, hash: tool.manifest.hash, approvedBy: this.approvedBy });
     return { ok: true, tool, approval };
+  }
+
+  /** Unions permissions from all step dependencies registered in the workflow. */
+  private async computeEffectivePermissions(workflow: Workflow): Promise<Permissions> {
+    const depNames = [...new Set(workflow.steps.map((s) => s.tool))];
+    const depPerms: Permissions[] = [];
+    for (const name of depNames) {
+      const dep = await this.opts.registry.get(name);
+      if (dep) depPerms.push(dep.manifest.permissions);
+    }
+    return unionPermissions(depPerms);
   }
 
   /**

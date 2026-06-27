@@ -205,7 +205,7 @@ export class NodePermissionSandbox implements Sandbox {
     const allowWrite = [...perms.fsWrite];
     for (const p of allowRead) flags.push(`--allow-fs-read=${p}`);
     for (const p of allowWrite) flags.push(`--allow-fs-write=${p}`);
-    if (perms.net !== PERMISSIONS_NET.none) flags.push("--allow-net");
+    if (perms.net !== PERMISSIONS_NET.NONE) flags.push("--allow-net");
     return flags;
   }
 
@@ -214,7 +214,7 @@ export class NodePermissionSandbox implements Sandbox {
     for (const name of perms.env) {
       if (process.env[name] !== undefined) env[name] = process.env[name];
     }
-    if (perms.net === PERMISSIONS_NET.allowlist) {
+    if (perms.net === PERMISSIONS_NET.ALLOWLIST) {
       env[META_AGENT_NET_ALLOWLIST_ENV] = perms.netAllowlist.join(",");
     }
     env.PATH = process.env.PATH ?? "";

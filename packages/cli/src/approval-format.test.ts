@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   formatGate1ChoicePrompt,
   formatGate1Header,
+  formatGate1WorkflowChoicePrompt,
+  formatGate1WorkflowHeader,
   formatGate23ChoicePrompt,
   formatGate23Header,
   formatLabelValue,
@@ -43,4 +45,19 @@ test("formatGate1ChoicePrompt includes all choices", () => {
 test("formatGate1Header", () => {
   const plain = stripAnsi(formatGate1Header());
   assert.match(plain, /GATE 1/);
+});
+
+test("formatGate1WorkflowHeader includes GATE 1 and workflow", () => {
+  const plain = stripAnsi(formatGate1WorkflowHeader());
+  assert.match(plain, /GATE 1/);
+  assert.match(plain, /workflow/i);
+});
+
+test("formatGate1WorkflowChoicePrompt includes approve, always-approve, edit, and reject keys", () => {
+  const plain = stripAnsi(formatGate1WorkflowChoicePrompt());
+  assert.match(plain, /\[a\]/);
+  assert.match(plain, /\[A\]/);
+  assert.match(plain, /\[e\]/);
+  assert.match(plain, /\[r\]/);
+  assert.ok(plain.endsWith("? "));
 });

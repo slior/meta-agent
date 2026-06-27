@@ -204,7 +204,7 @@ export class FsToolRegistry implements ToolRegistry {
         }
       }
 
-      if (manifest.kind === TOOL_KIND.workflow) {
+      if (manifest.kind === TOOL_KIND.WORKFLOW) {
         await this.loadWorkflowTool(name, workflowPath, manifest, approval);
       } else {
         await this.loadCodeTool(name, codePath, manifest, approval);
@@ -296,7 +296,7 @@ export class FsToolRegistry implements ToolRegistry {
     await writeFile(join(sub, "manifest.json"), JSON.stringify(tool.manifest, null, 2), "utf8");
     await writeFile(join(sub, "approval.json"), JSON.stringify(approval, null, 2), "utf8");
     
-    if (tool.manifest.kind === TOOL_KIND.workflow) {
+    if (tool.manifest.kind === TOOL_KIND.WORKFLOW) {
       // Write tool.code verbatim so on-disk bytes match what verifyToolIntegrity hashed.
       const workflow = JSON.parse(tool.code) as Workflow;
       await writeFile(join(sub, "workflow.json"), tool.code, "utf8");

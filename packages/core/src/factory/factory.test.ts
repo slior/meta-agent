@@ -7,7 +7,7 @@ import { ToolFactory } from "./factory.ts";
 import { MockLLMProvider } from "../llm/mock-provider.ts";
 import { FsToolRegistry } from "../registry/fs-registry.ts";
 import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
-import { APPROVAL_DECISION } from "../approval/interface.ts";
+import { APPROVAL_DECISION, GATE1_KIND, type Gate1ReviewPayload } from "../approval/interface.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
 import type { Tool, ToolDraft } from "../types.ts";
@@ -33,7 +33,7 @@ test("factory: happy path — static passes, smoke passes, approval auto-approve
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider().onStructured<ToolDraft>(() => GOOD_DRAFT);
     const prompter = {
-      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: false }),
+      promptGate1: async () => ({ kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false }),
       promptGate23: async () => { throw new Error("no"); },
     };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
@@ -59,7 +59,7 @@ test("factory: static failure triggers repair loop", async () => {
       .onStructured<ToolDraft>(() => ({ ...GOOD_DRAFT, name: "BadName" }))
       .onStructured<ToolDraft>(() => GOOD_DRAFT);
     const prompter = {
-      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: false }),
+      promptGate1: async () => ({ kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false }),
       promptGate23: async () => { throw new Error("no"); },
     };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
@@ -82,7 +82,7 @@ test("factory: rejected by reviewer returns failure", async () => {
     const sandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider().onStructured<ToolDraft>(() => GOOD_DRAFT);
     const prompter = {
-      promptGate1: async () => ({ decision: APPROVAL_DECISION.reject, reason: "no thanks" }),
+      promptGate1: async () => ({ kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.REJECT, reason: "no thanks" }),
       promptGate23: async () => { throw new Error("no"); },
     };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
@@ -147,7 +147,12 @@ describe("createWorkflow and previewWorkflow", () => {
     const sandbox = new NodePermissionSandbox({ workspace: wfDir });
     const llm = new MockLLMProvider();
     const prompter = {
-      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: false }),
+      promptGate1: async (payload: Gate1ReviewPayload) => {
+        if (payload.kind === GATE1_KIND.WORKFLOW) {
+          return { kind: GATE1_KIND.WORKFLOW, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false };
+        }
+        return { kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false };
+      },
       promptGate23: async () => { throw new Error("no"); },
     };
     const approval = new TieredApprovalPolicy(prompter, { workspace: wfDir });
@@ -187,5 +192,114 @@ describe("createWorkflow and previewWorkflow", () => {
     // Confirm not persisted — tool with name "x" should not be in registry
     const saved = await wfRegistry.get("x");
     assert.ok(!saved);
+  });
+
+  test("createWorkflow: calls reviewDraft with workflow payload before saving", async () => {
+    const slice = [
+      { name: "fetch-webpage-text", args: { url: "https://x/p.md" }, ok: true, value: "text" },
+    ];
+    let capturedPayload: Gate1ReviewPayload | undefined;
+
+    const customPrompter = {
+      promptGate1: async (p: Gate1ReviewPayload) => {
+        capturedPayload = p;
+        return { kind: GATE1_KIND.WORKFLOW, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false };
+      },
+      promptGate23: async () => { throw new Error("no"); },
+    };
+    const customApproval = new TieredApprovalPolicy(customPrompter, { workspace: wfDir });
+    const customFactory = new ToolFactory({
+      llm: new MockLLMProvider(),
+      registry: wfRegistry,
+      sandbox: new NodePermissionSandbox({ workspace: wfDir }),
+      approval: customApproval,
+      tracer: await Tracer.open(join(wfDir, "traces"), "s2"),
+      tombstoned: new Set(),
+    });
+
+    const out = await customFactory.createWorkflow({
+      slice, name: "fetch-only", intent: "fetch a url", description: "fetches url",
+    });
+
+    assert.equal(out.ok, true);
+    assert.ok(capturedPayload, "reviewDraft should have been called");
+    assert.equal(capturedPayload?.kind, GATE1_KIND.WORKFLOW);
+    if (capturedPayload?.kind === GATE1_KIND.WORKFLOW) {
+      assert.equal(capturedPayload.manifest.name, "fetch-only");
+      assert.ok(typeof capturedPayload.literateRendering === "string");
+      assert.ok(capturedPayload.literateRendering.length > 0);
+      assert.equal(capturedPayload.effectivePermissions.net, "allowlist");
+    }
+  });
+
+  test("createWorkflow: returns { ok: false } when reviewer rejects", async () => {
+    const slice = [
+      { name: "fetch-webpage-text", args: { url: "https://x" }, ok: true, value: "t" },
+    ];
+    const rejectPrompter = {
+      promptGate1: async (p: Gate1ReviewPayload) => {
+        if (p.kind === GATE1_KIND.WORKFLOW) {
+          return { kind: GATE1_KIND.WORKFLOW, decision: APPROVAL_DECISION.REJECT, reason: "not today" };
+        }
+        return { kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false };
+      },
+      promptGate23: async () => { throw new Error("no"); },
+    };
+    const rejectApproval = new TieredApprovalPolicy(rejectPrompter, { workspace: wfDir });
+    const rejectFactory = new ToolFactory({
+      llm: new MockLLMProvider(),
+      registry: wfRegistry,
+      sandbox: new NodePermissionSandbox({ workspace: wfDir }),
+      approval: rejectApproval,
+      tracer: await Tracer.open(join(wfDir, "traces"), "s3"),
+      tombstoned: new Set(),
+    });
+
+    const out = await rejectFactory.createWorkflow({
+      slice, name: "rejected-wf", intent: "test", description: "d",
+    });
+
+    assert.equal(out.ok, false);
+    if (!out.ok) assert.match(out.reason, /not today/);
+    assert.equal(await wfRegistry.has("rejected-wf"), false);
+  });
+
+  test("createWorkflow: applies editedName from approval decision", async () => {
+    const slice = [
+      { name: "fetch-webpage-text", args: { url: "https://x/q.md" }, ok: true, value: "text" },
+    ];
+    const editPrompter = {
+      promptGate1: async (p: Gate1ReviewPayload) => {
+        if (p.kind === GATE1_KIND.WORKFLOW) {
+          return {
+            kind: GATE1_KIND.WORKFLOW,
+            decision: APPROVAL_DECISION.APPROVE,
+            alwaysApprove: false,
+            editedName: "renamed-fetch",
+          };
+        }
+        return { kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false };
+      },
+      promptGate23: async () => { throw new Error("no"); },
+    };
+    const editApproval = new TieredApprovalPolicy(editPrompter, { workspace: wfDir });
+    const editFactory = new ToolFactory({
+      llm: new MockLLMProvider(),
+      registry: wfRegistry,
+      sandbox: new NodePermissionSandbox({ workspace: wfDir }),
+      approval: editApproval,
+      tracer: await Tracer.open(join(wfDir, "traces"), "s4"),
+      tombstoned: new Set(),
+    });
+
+    const out = await editFactory.createWorkflow({
+      slice, name: "original-name", intent: "test", description: "d",
+    });
+
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+    assert.equal(out.tool.manifest.name, "renamed-fetch");
+    assert.equal(await wfRegistry.has("renamed-fetch"), true);
+    assert.equal(await wfRegistry.has("original-name"), false);
   });
 });

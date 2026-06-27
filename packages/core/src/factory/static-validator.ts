@@ -138,8 +138,8 @@ function validateDraftStructure(draft: ToolDraft, errs: string[]): void {
       }
     }
   }
-  if (d.kind !== TOOL_KIND.atomic && d.kind !== TOOL_KIND.composite) {
-    errs.push(`kind must be "${TOOL_KIND.atomic}" or "${TOOL_KIND.composite}" (got ${valueKind(d.kind)}).`);
+  if (d.kind !== TOOL_KIND.ATOMIC && d.kind !== TOOL_KIND.COMPOSITE) {
+    errs.push(`kind must be "${TOOL_KIND.ATOMIC}" or "${TOOL_KIND.COMPOSITE}" (got ${valueKind(d.kind)}).`);
   }
   if (d.smokeTestInput === undefined) {
     errs.push(
@@ -169,8 +169,8 @@ function validatePermissionsBlock(pe: unknown, errs: string[]): void {
   if (!Array.isArray(p.fsWrite)) errs.push("permissions.fsWrite must be an array");
   if (!Array.isArray(p.netAllowlist)) errs.push("permissions.netAllowlist must be an array");
   if (!Array.isArray(p.env)) errs.push("permissions.env must be an array");
-  if (p.net !== PERMISSIONS_NET.none && p.net !== PERMISSIONS_NET.allowlist) {
-    errs.push(`permissions.net must be "${PERMISSIONS_NET.none}" or "${PERMISSIONS_NET.allowlist}"`);
+  if (p.net !== PERMISSIONS_NET.NONE && p.net !== PERMISSIONS_NET.ALLOWLIST) {
+    errs.push(`permissions.net must be "${PERMISSIONS_NET.NONE}" or "${PERMISSIONS_NET.ALLOWLIST}"`);
   }
 }
 
@@ -191,7 +191,7 @@ function validateImportsAgainstPermissions(draft: ToolDraft, errs: string[]): vo
       continue;
     }
     if (NET_MODULES.has(mod) || mod === NODE_FETCH_MODULE) {
-      if (pe?.net === PERMISSIONS_NET.none) errs.push(`import of '${mod}' requires net permission`);
+      if (pe?.net === PERMISSIONS_NET.NONE) errs.push(`import of '${mod}' requires net permission`);
       continue;
     }
     if (ALLOWED_NODE_MODULES.has(mod)) continue;
@@ -202,10 +202,10 @@ function validateImportsAgainstPermissions(draft: ToolDraft, errs: string[]): vo
 
 function validateInvokeToolConsistency(draft: ToolDraft, ctx: ValidationContext, errs: string[]): void {
   const calls = typeof draft.code === "string" ? extractInvokeToolCalls(draft.code) : [];
-  if (draft.kind === TOOL_KIND.atomic && calls.length > 0) {
-    errs.push(`${TOOL_KIND.atomic} tool must not call ${INVOKE_TOOL_CALLEE} (found: ${calls.join(",")})`);
+  if (draft.kind === TOOL_KIND.ATOMIC && calls.length > 0) {
+    errs.push(`${TOOL_KIND.ATOMIC} tool must not call ${INVOKE_TOOL_CALLEE} (found: ${calls.join(",")})`);
   }
-  if (draft.kind === TOOL_KIND.composite && Array.isArray(draft.dependencies)) {
+  if (draft.kind === TOOL_KIND.COMPOSITE && Array.isArray(draft.dependencies)) {
     const declared = new Set(draft.dependencies);
     const actual = new Set(calls);
     for (const dep of declared) {

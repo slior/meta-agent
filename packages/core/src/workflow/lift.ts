@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { isRefSentinel } from "../agent/result-store.ts";
 import { canonicalJson } from "../hash.ts";
-import { normalizePermissions } from "../permissions-normalize.ts";
-import { TOOL_KIND, type Tool, type ToolManifest, type Permissions } from "../types.ts";
+import { normalizePermissions, unionPermissions } from "../permissions-normalize.ts";
+import { TOOL_KIND, type Tool, type ToolManifest } from "../types.ts";
 import { IR_SCHEMA_VERSION, STEP_KIND, ARG_KIND, type Argument, type ToolCallStep, type Workflow, type WorkflowInput } from "./types.ts";
 
 /**
@@ -139,7 +139,7 @@ export function liftFromTrace(req: LiftRequest): LiftResult {
     rationale: req.goal, inputSchema: {},
     outputShape: {}, permissions,
     dependencies, limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
-    createdAt: new Date().toISOString(), kind: TOOL_KIND.workflow,
+    createdAt: new Date().toISOString(), kind: TOOL_KIND.WORKFLOW,
   };
 
   const hash = "sha256:" + simpleHash(canonicalJson(workflow) + "\n" + canonicalJson(manifest));
@@ -230,22 +230,6 @@ function liftStepArguments(
     }
   }
   return args;
-}
-
-function unionPermissions(list: Permissions[]): Permissions {
-  const out = normalizePermissions({});
-  for (const p of list) {
-    out.fsRead = unionStrings(out.fsRead, p.fsRead);
-    out.fsWrite = unionStrings(out.fsWrite, p.fsWrite);
-    out.netAllowlist = unionStrings(out.netAllowlist, p.netAllowlist);
-    out.env = unionStrings(out.env, p.env);
-    if (p.net === "allowlist") out.net = "allowlist";
-  }
-  return out;
-}
-
-function unionStrings(a: string[], b: string[]): string[] {
-  return Array.from(new Set([...a, ...b])).sort();
 }
 
 function simpleHash(s: string): string {

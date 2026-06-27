@@ -1,111 +1,130 @@
-import type { ApprovalRecord, ApprovalToken, Tool, ToolDraft, ToolResult } from "../types.ts";
+import type { ApprovalRecord, ApprovalToken, Permissions, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
+import type { Workflow } from "../workflow/types.ts";
 
 /** Discriminator values for {@link Gate1Decision} and {@link ExecutionDecision}. */
 export const APPROVAL_DECISION = {
-  approve: "approve",
-  reject: "reject",
+  APPROVE: "approve",
+  REJECT: "reject",
 } as const;
 
+/** Discriminator values for {@link Gate1ReviewPayload} and {@link Gate1Decision} unions. */
+export const GATE1_KIND = {
+  CODE: "code",
+  WORKFLOW: "workflow",
+} as const;
+
+export type Gate1Kind = (typeof GATE1_KIND)[keyof typeof GATE1_KIND];
+
 /**
- * Represents the possible decisions returned from the first approval gate (Gate 1) during tool onboarding or review.
- *
- * - If `decision` is `"approve"`:
- *    - `alwaysApprove`: Indicates if future instances should be auto-approved without manual review.
- *    - `notes` (optional): Reviewer comments or justifications.
- *    - `editedDraft` (optional): A possibly edited version of the tool draft suggested by the reviewer.
- *
- * - If `decision` is `"reject"`:
- *    - `reason`: Explanation for why the draft/tool was rejected.
+ * Gate 1 review payload for a code-generated tool (atomic or composite).
+ * Carries the full ToolDraft and the sandboxed smoke-test result shown to the reviewer.
  */
-export type Gate1Decision =
-  | { decision: typeof APPROVAL_DECISION.approve; alwaysApprove: boolean; notes?: string; editedDraft?: ToolDraft }
-  | { decision: typeof APPROVAL_DECISION.reject; reason: string };
+export type CodeGate1Payload = {
+  kind: typeof GATE1_KIND.CODE;
+  draft: ToolDraft;
+  smoke: ToolResult;
+};
+
+/**
+ * Gate 1 review payload for a deterministically lifted workflow tool.
+ * Carries the workflow IR, its manifest, the unioned effective permissions of all steps,
+ * and a human-readable literate rendering of the workflow.
+ */
+export type WorkflowGate1Payload = {
+  kind: typeof GATE1_KIND.WORKFLOW;
+  workflow: Workflow;
+  /** Manifest produced by the lifter (name, description, inputSchema, hash, permissions). */
+  manifest: ToolManifest;
+  /** Union of all step-dependency permissions (bubbled-up set shown to reviewer). */
+  effectivePermissions: Permissions;
+  /** Output of `renderLiterate(workflow)` — step-by-step human-readable description. */
+  literateRendering: string;
+};
+
+/** Discriminated union of Gate 1 review payloads. Passed to {@link ApprovalPolicy.reviewDraft}. */
+export type Gate1ReviewPayload = CodeGate1Payload | WorkflowGate1Payload;
+
+/**
+ * Gate 1 decision returned for a code tool.
+ * - approve: optionally always-approve future executions; optionally carry an edited draft.
+ * - reject: reason shown to the agent.
+ */
+export type CodeGate1Decision =
+  | { kind: typeof GATE1_KIND.CODE; decision: typeof APPROVAL_DECISION.APPROVE; alwaysApprove: boolean; notes?: string; editedDraft?: ToolDraft }
+  | { kind: typeof GATE1_KIND.CODE; decision: typeof APPROVAL_DECISION.REJECT; reason: string };
+
+/**
+ * Gate 1 decision returned for a workflow tool.
+ * - approve: optionally always-approve; optionally carry edited name/description.
+ * - reject: reason shown to the agent.
+ */
+export type WorkflowGate1Decision =
+  | { kind: typeof GATE1_KIND.WORKFLOW; decision: typeof APPROVAL_DECISION.APPROVE; alwaysApprove: boolean; notes?: string; editedName?: string; editedDescription?: string }
+  | { kind: typeof GATE1_KIND.WORKFLOW; decision: typeof APPROVAL_DECISION.REJECT; reason: string };
+
+/** Discriminated union of Gate 1 decisions. Returned from {@link ApprovalPolicy.reviewDraft}. */
+export type Gate1Decision = CodeGate1Decision | WorkflowGate1Decision;
 
 /**
  * Represents the possible outcomes of an execution approval decision (Gate 2/3).
  *
  * - If `decision` is `"approve"`:
- *    - `token`: An {@link ApprovalToken} that authorizes the tool execution and can be used for auditing or further gating.
- *    - `cacheForSession`: If true, indicates that the approval decision may be cached for the remainder of the session to streamline repeated approvals.
+ *    - `token`: An {@link ApprovalToken} that authorizes the tool execution.
+ *    - `cacheForSession`: If true, the approval decision may be cached for the session.
  *
  * - If `decision` is `"reject"`:
- *    - `reason`: Explanation for rejection of the execution request (e.g., risk, policy, user denial).
+ *    - `reason`: Explanation for rejection.
  */
 export type ExecutionDecision =
-  | { decision: typeof APPROVAL_DECISION.approve; token: ApprovalToken; cacheForSession: boolean }
-  | { decision: typeof APPROVAL_DECISION.reject; reason: string };
+  | { decision: typeof APPROVAL_DECISION.APPROVE; token: ApprovalToken; cacheForSession: boolean }
+  | { decision: typeof APPROVAL_DECISION.REJECT; reason: string };
 
 /** Risk levels for execution prompts (promptGate23). */
 export const RISK_TIER = {
-  low: "low",
-  medium: "medium",
-  elevated: "elevated",
+  LOW: "low",
+  MEDIUM: "medium",
+  ELEVATED: "elevated",
 } as const;
 
 export type RiskTier = (typeof RISK_TIER)[keyof typeof RISK_TIER];
 
 /**
  * Interface for orchestrating approval prompts at different gates of the tool execution lifecycle.
- *
- * This allows a human or automated agent (UI, CLI, or even an LLM) to approve, reject, or review tool onboarding (Gate 1)
- * as well as tool execution (Gates 2/3), typically by interacting with a user and returning a decision object.
  */
 export interface ApprovalPrompter {
   /**
-   * Prompt the user for review and approval of a ToolDraft during onboarding or initial review (Gate 1).
+   * Prompt the user for review and approval at Gate 1 (tool creation).
    *
-   * @param draft - The ToolDraft object representing the candidate tool configuration.
-   * @param smokeTest - The ToolResult object with results of basic code analysis or dry-run checks on the draft.
-   * @returns A Promise resolving to a Gate1Decision, indicating approval, alwaysApprove preference, optional edits, or rejection rationale.
+   * @param payload - Discriminated union: code draft + smoke result, or workflow IR + permissions.
+   * @returns A Promise resolving to a {@link Gate1Decision} whose `kind` matches `payload.kind`.
    */
-  promptGate1(draft: ToolDraft, smokeTest: ToolResult): Promise<Gate1Decision>;
+  promptGate1(payload: Gate1ReviewPayload): Promise<Gate1Decision>;
 
   /**
-   * Prompt the user (or approval agent) for approval before executing a tool (Gate 2/3). Usually used to implement runtime risk gating or user confirmation.
-   *
-   * @param tool - The Tool instance about to be executed.
-   * @param args - The arguments that will be provided to the tool upon execution.
-   * @param tier - The assessed risk tier for the execution (low, medium, or elevated).
-   * @returns A Promise resolving to an ExecutionDecision object, indicating approval (possibly with a token) or rejection and its rationale.
+   * Prompt the user (or approval agent) for approval before executing a tool (Gate 2/3).
    */
   promptGate23(tool: Tool, args: unknown, tier: RiskTier): Promise<ExecutionDecision>;
 }
 
 /**
  * Interface defining the policy logic for tool approval and execution gating.
- *
- * Implementations of ApprovalPolicy encapsulate the rules used to:
- *   - review and approve tool drafts during onboarding (Gate 1)
- *   - verify or bypass execution of tools at runtime (Gate 2/3)
- *
- * Methods:
- * - reviewDraft: Reviews a ToolDraft and its smoke test results, returning a Gate1Decision
- *   (e.g., approve, request edits, or reject).
- * - checkExecution: Decides whether an execution of a given tool with specific arguments
- *   should be allowed, based on the tool, arguments, and (optional) prior approval.
- * - yolo: If true, indicates that the policy bypasses gating for all approvals (auto-approve mode).
  */
 export interface ApprovalPolicy {
   /**
-   * Review a tool draft and its smoke test output to determine if it should be approved for onboarding (Gate 1).
-   * @param draft - The ToolDraft object representing the candidate tool.
-   * @param smokeTest - The ToolResult summarizing checks on the draft.
-   * @returns A Promise resolving to a Gate1Decision (approval, request edits, or rejection).
+   * Review a tool creation payload at Gate 1.
+   *
+   * @param payload - Discriminated union describing the tool being reviewed.
+   * @returns A Promise resolving to a {@link Gate1Decision} whose `kind` matches `payload.kind`.
    */
-  reviewDraft(draft: ToolDraft, smokeTest: ToolResult): Promise<Gate1Decision>;
+  reviewDraft(payload: Gate1ReviewPayload): Promise<Gate1Decision>;
 
   /**
-   * Check if a tool execution should be permitted, generally used at runtime (Gate 2/3).
-   * @param tool - The Tool instance to be executed.
-   * @param args - The arguments provided to the tool.
-   * @param approval - An optional ApprovalRecord with prior approval information, or null if none.
-   * @returns A Promise resolving to an ExecutionDecision (approve or reject).
+   * Check if a tool execution should be permitted at runtime (Gate 2/3).
    */
   checkExecution(tool: Tool, args: unknown, approval: ApprovalRecord | null): Promise<ExecutionDecision>;
 
   /**
-   * Indicates if the policy is in 'yolo' (auto-approve/everything allowed) mode.
-   * If true, all checks are bypassed and approvals are always granted.
+   * If true, the policy auto-approves everything (yolo mode).
    */
   readonly yolo: boolean;
 }

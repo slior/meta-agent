@@ -65,13 +65,13 @@ export function buildLLMGenerateTool(): Tool {
       additionalProperties: false,
     },
     outputShape: {},
-    permissions: { fsRead: [], fsWrite: [], net: PERMISSIONS_NET.none, netAllowlist: [], env: [] },
+    permissions: { fsRead: [], fsWrite: [], net: PERMISSIONS_NET.NONE, netAllowlist: [], env: [] },
     dependencies: [],
     limits: { timeoutMs: 60_000, maxOldSpaceSizeMb: 256 },
     createdAt: BUILTIN_EPOCH,
-    kind: TOOL_KIND.atomic,
-    capabilities: [TOOL_CAPABILITY.llm],
-    sourceLabels: [SOURCE_LABEL.llmGenerated],
+    kind: TOOL_KIND.ATOMIC,
+    capabilities: [TOOL_CAPABILITY.LLM],
+    sourceLabels: [SOURCE_LABEL.LLM_GENERATED],
   };
   const hash = hashTool(LLM_GENERATE_CODE, manifestNoHash);
   return { manifest: { ...manifestNoHash, hash }, code: LLM_GENERATE_CODE };

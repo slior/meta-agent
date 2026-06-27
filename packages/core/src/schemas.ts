@@ -5,7 +5,7 @@ export const PERMISSIONS_SCHEMA = {
   properties: {
     fsRead: { type: "array", items: { type: "string" } },
     fsWrite: { type: "array", items: { type: "string" } },
-    net: { type: "string", enum: [PERMISSIONS_NET.none, PERMISSIONS_NET.allowlist] },
+    net: { type: "string", enum: [PERMISSIONS_NET.NONE, PERMISSIONS_NET.ALLOWLIST] },
     netAllowlist: { type: "array", items: { type: "string" } },
     env: { type: "array", items: { type: "string" } },
   },
@@ -34,7 +34,7 @@ export const MANIFEST_SCHEMA = {
     },
     hash: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
     createdAt: { type: "string", format: "date-time" },
-    kind: { type: "string", enum: [TOOL_KIND.atomic, TOOL_KIND.composite] },
+    kind: { type: "string", enum: [TOOL_KIND.ATOMIC, TOOL_KIND.COMPOSITE] },
   },
   required: [
     "name", "description", "rationale", "inputSchema", "outputShape",
@@ -55,7 +55,7 @@ export const TOOL_DRAFT_SCHEMA = {
     code: { type: "string", minLength: 1, maxLength: 50000 },
     dependencies: { type: "array", items: { type: "string" } },
     smokeTestInput: {},
-    kind: { type: "string", enum: [TOOL_KIND.atomic, TOOL_KIND.composite] },
+    kind: { type: "string", enum: [TOOL_KIND.ATOMIC, TOOL_KIND.COMPOSITE] },
   },
   required: [
     "name", "description", "rationale", "inputSchema", "outputShape",

@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  AgentLoop, APPROVAL_DECISION, CHAT_ROLE, CHAT_TOOL_TYPE, FsToolRegistry, HybridToolIndex, META_FN, MockLLMProvider,
+  AgentLoop, APPROVAL_DECISION, CHAT_ROLE, CHAT_TOOL_TYPE, FsToolRegistry, GATE1_KIND, HybridToolIndex, META_FN, MockLLMProvider,
   NodePermissionSandbox, TieredApprovalPolicy, ToolFactory, Tracer,
 } from "./index.ts";
 import type { ChatResponse, ToolDraft } from "./index.ts";
@@ -73,7 +73,7 @@ test("E2E: agent finds-nothing, proposes tool, then invokes it", async () => {
       .onChat(() => asst("result: 14"));
 
     const prompter = {
-      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: true }),
+      promptGate1: async () => ({ kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: true }),
       promptGate23: async () => { throw new Error("no"); },
     };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir, yolo: false });
@@ -103,7 +103,7 @@ test("E2E: composite invokeTool runs with no ambient authority (depth 1 inner ca
       .onStructured<ToolDraft>(() => PLUS_ONE_THEN_DOUBLE_DRAFT);
 
     const prompter = {
-      promptGate1: async () => ({ decision: APPROVAL_DECISION.approve, alwaysApprove: true }),
+      promptGate1: async () => ({ kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: true }),
       promptGate23: async () => { throw new Error("no"); },
     };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir, yolo: false });

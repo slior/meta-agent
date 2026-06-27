@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Permissions } from "@meta-agent/core";
 import { PERMISSIONS_NET } from "@meta-agent/core";
-import { formatArgsTable, formatPermissionsTable } from "./approval-display.ts";
+import { formatArgsTable, formatPermissionsTable, formatWorkflowInputSchema } from "./approval-display.ts";
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -57,7 +57,7 @@ test("formatPermissionsTable: blocked network", () => {
   const perms: Permissions = {
     fsRead: [],
     fsWrite: ["*"],
-    net: PERMISSIONS_NET.none,
+    net: PERMISSIONS_NET.NONE,
     netAllowlist: [],
     env: [],
   };
@@ -73,7 +73,7 @@ test("formatPermissionsTable: allowlist hosts", () => {
   const perms: Permissions = {
     fsRead: ["/workspace/**"],
     fsWrite: [],
-    net: PERMISSIONS_NET.allowlist,
+    net: PERMISSIONS_NET.ALLOWLIST,
     netAllowlist: ["api.example.com"],
     env: ["PATH"],
   };
@@ -89,10 +89,33 @@ test("formatPermissionsTable: empty allowlist", () => {
   const perms: Permissions = {
     fsRead: [],
     fsWrite: [],
-    net: PERMISSIONS_NET.allowlist,
+    net: PERMISSIONS_NET.ALLOWLIST,
     netAllowlist: [],
     env: [],
   };
   const out = stripAnsi(formatPermissionsTable(perms));
   assert.match(out, /allowlist \(no hosts\)/);
+});
+
+test("formatWorkflowInputSchema: renders parameter name, type, and required status", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "the target URL" },
+      path: { type: "string" },
+    },
+    required: ["url"],
+  };
+  const plain = stripAnsi(formatWorkflowInputSchema(schema));
+  assert.match(plain, /url/);
+  assert.match(plain, /string/);
+  assert.match(plain, /required/);
+  assert.match(plain, /path/);
+  assert.match(plain, /optional/);
+  assert.match(plain, /the target URL/);
+});
+
+test("formatWorkflowInputSchema: empty properties renders no-parameters message", () => {
+  const plain = stripAnsi(formatWorkflowInputSchema({ type: "object" }));
+  assert.match(plain, /no parameters/);
 });

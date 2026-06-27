@@ -1,11 +1,13 @@
-/** Values for {@link Permissions.net}; keep aligned with static validation and JSON schemas. */
+/** Allowed values for {@link NetPermissionMode}; keep aligned with static validation and JSON schemas. */
 export const PERMISSIONS_NET = {
-  none: "none",
-  allowlist: "allowlist",
+  NONE: "none",
+  ALLOWLIST: "allowlist",
 } as const;
 
+/** Network permission mode on a tool manifest's {@link Permissions}. */
 export type NetPermissionMode = (typeof PERMISSIONS_NET)[keyof typeof PERMISSIONS_NET];
 
+/** Sandbox filesystem, network, and environment access declared by a tool. */
 export type Permissions = {
   fsRead: string[];
   fsWrite: string[];
@@ -14,25 +16,28 @@ export type Permissions = {
   env: string[];
 };
 
+/** Resource limits enforced when running a tool in the sandbox. */
 export type Limits = {
   timeoutMs: number;
   maxOldSpaceSizeMb: number;
 };
 
-/** Values for {@link ToolManifest.kind} / {@link ToolDraft.kind}. */
+/** Allowed values for {@link ToolKind}; keep aligned with static validation and JSON schemas. */
 export const TOOL_KIND = {
-  atomic: "atomic",
-  composite: "composite",
-  workflow: "workflow",
+  ATOMIC: "atomic",
+  COMPOSITE: "composite",
+  WORKFLOW: "workflow",
 } as const;
 
+/** Kind discriminator on {@link ToolManifest} and {@link ToolDraft}. */
 export type ToolKind = (typeof TOOL_KIND)[keyof typeof TOOL_KIND];
 
 /** Mediated, host-serviced capabilities a tool may declare in its manifest. */
 export const TOOL_CAPABILITY = {
-  llm: "llm",
+  LLM: "llm",
 } as const;
 
+/** Capability string accepted in {@link ToolManifest.capabilities}. */
 export type ToolCapability = (typeof TOOL_CAPABILITY)[keyof typeof TOOL_CAPABILITY];
 
 /** The set of capability strings the host understands and is willing to service. */
@@ -40,11 +45,13 @@ export const KNOWN_TOOL_CAPABILITIES: ReadonlySet<string> = new Set(Object.value
 
 /** Taint source labels a tool may declare in manifest `sourceLabels` (VERIFY). */
 export const SOURCE_LABEL = {
-  llmGenerated: "llm_generated",
+  LLM_GENERATED: "llm_generated",
 } as const;
 
+/** Taint source label string for VERIFY metadata. */
 export type SourceLabel = (typeof SOURCE_LABEL)[keyof typeof SOURCE_LABEL];
 
+/** Persisted tool metadata hashed and stored in the registry. */
 export type ToolManifest = {
   name: string;
   description: string;
@@ -67,11 +74,13 @@ export type ToolManifest = {
   frameConditions?: string[];
 };
 
+/** A registered tool: manifest plus executable source. */
 export type Tool = {
   manifest: ToolManifest;
   code: string;
 };
 
+/** Pre-validation tool proposal from the factory or meta-tools. */
 export type ToolDraft = {
   name: string;
   description: string;
@@ -86,6 +95,7 @@ export type ToolDraft = {
   limits?: Partial<Limits>;
 };
 
+/** Registry record of a past Gate 1 approval for a tool hash. */
 export type ApprovalRecord = {
   hash: string;
   approvedAt: string;
@@ -94,8 +104,10 @@ export type ApprovalRecord = {
   notes?: string;
 };
 
+/** Opaque token issued after Gate 2/3 execution approval for a single invoke. */
 export type ApprovalToken = string;
 
+/** Discriminator for failures returned as {@link ToolResult}. */
 export type ToolErrorKind =
   | "timeout"
   | "permission_denied"
@@ -106,22 +118,26 @@ export type ToolErrorKind =
   | "depth_exceeded"
   | "unknown_tool";
 
+/** Structured error payload when {@link ToolResult.ok} is false. */
 export type ToolError = {
   kind: ToolErrorKind;
   message: string;
   details?: unknown;
 };
 
+/** Success or failure outcome of tool invocation or meta-tool calls. */
 export type ToolResult =
   | { ok: true; value: unknown }
   | { ok: false; error: ToolError };
 
+/** Short entry in the tool catalog exposed to the agent. */
 export type CatalogEntry = {
   name: string;
   shortDescription: string;
   kind: ToolKind;
 };
 
+/** Ranked search hit from the tool index. */
 export type FindResult = {
   name: string;
   description: string;
@@ -130,6 +146,7 @@ export type FindResult = {
   matchSpans: string[];
 };
 
+/** Compact tool row for registry listing. */
 export type ToolSummary = {
   name: string;
   description: string;

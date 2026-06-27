@@ -40,7 +40,7 @@ function formatPathScope(globs: string[]): string {
 }
 
 function formatNetwork(perms: Permissions): string {
-  if (perms.net === PERMISSIONS_NET.none) return "blocked";
+  if (perms.net === PERMISSIONS_NET.NONE) return "blocked";
   if (perms.netAllowlist.length === 0) return "allowlist (no hosts)";
   return `allowlist (${perms.netAllowlist.join(", ")})`;
 }
@@ -150,4 +150,28 @@ export function formatPermissionsTable(perms: Permissions): string {
   const table = colorizeTable(renderTable(PERM_COLUMNS, rows));
   const indented = table.split("\n").map((line) => theme.indent(line)).join("\n");
   return `${header}\n${indented}`;
+}
+
+/**
+ * Formats a workflow's JSON Schema input shape as a human-readable parameter list
+ * for Gate 1 approval prompts.
+ *
+ * @param schema - The `inputSchema` from the workflow manifest (JSON Schema object).
+ * @returns ANSI-styled multi-line string listing each declared parameter with type,
+ *   required/optional status, and optional description.
+ */
+export function formatWorkflowInputSchema(schema: Record<string, unknown>): string {
+  const header = theme.progressLabel("Inputs");
+  const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
+  const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
+  if (!properties || Object.keys(properties).length === 0) {
+    return `${header}\n${theme.meta("  (no parameters)")}`;
+  }
+  const lines = Object.entries(properties).map(([name, prop]) => {
+    const typeName = typeof prop.type === "string" ? prop.type : "unknown";
+    const req = required.includes(name) ? "required" : "optional";
+    const desc = typeof prop.description === "string" ? ` — ${prop.description}` : "";
+    return `  ${theme.progressLabel(name + ":")} ${theme.progressBody(typeName)} (${req})${theme.meta(desc)}`;
+  });
+  return `${header}\n${lines.join("\n")}`;
 }

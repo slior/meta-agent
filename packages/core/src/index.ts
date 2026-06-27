@@ -22,8 +22,20 @@ export {
 export type { IntegrityStatus, IntegrityResult, IntegrityIssue } from "./registry/integrity.ts";
 export type { ToolIndex } from "./index-store/interface.ts";
 export { HybridToolIndex } from "./index-store/hybrid-index.ts";
-export { APPROVAL_DECISION, RISK_TIER } from "./approval/interface.ts";
-export type { ApprovalPolicy, ApprovalPrompter, Gate1Decision, ExecutionDecision, RiskTier } from "./approval/interface.ts";
+export { APPROVAL_DECISION, GATE1_KIND, RISK_TIER } from "./approval/interface.ts";
+export type {
+  ApprovalPolicy,
+  ApprovalPrompter,
+  CodeGate1Decision,
+  CodeGate1Payload,
+  ExecutionDecision,
+  Gate1Decision,
+  Gate1Kind,
+  Gate1ReviewPayload,
+  RiskTier,
+  WorkflowGate1Decision,
+  WorkflowGate1Payload,
+} from "./approval/interface.ts";
 export { TieredApprovalPolicy, riskTier } from "./approval/tiered-policy.ts";
 export type { LLMProvider, ChatRequest, ChatResponse, ChatMessage, ChatRole, ToolDef, ToolCall, StructuredRequest } from "./llm/LLMProvider.ts";
 export { CHAT_ROLE, CHAT_TOOL_CHOICE, CHAT_TOOL_TYPE } from "./llm/LLMProvider.ts";
