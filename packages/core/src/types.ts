@@ -114,6 +114,7 @@ export const TOOL_ERROR_KIND = {
   OUTPUT_TRUNCATED: "output_truncated",
   DEPTH_EXCEEDED: "depth_exceeded",
   UNKNOWN_TOOL: "unknown_tool",
+  OUTPUT_SCHEMA_VIOLATION: "output_schema_violation",
 } as const;
 
 /** Discriminator for failures returned as {@link ToolResult}. */

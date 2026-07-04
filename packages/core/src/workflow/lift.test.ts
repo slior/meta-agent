@@ -29,6 +29,22 @@ const COUNT: Tool = {
   ...FETCH,
   manifest: { ...FETCH.manifest, name: "count-rows", permissions: { fsRead: [], fsWrite: [], net: "allowlist", netAllowlist: ["api"], env: [] } },
 };
+const STRING_OUT: Tool = {
+  ...FETCH,
+  manifest: {
+    ...FETCH.manifest,
+    name: "string-tool",
+    outputShape: { type: "string" },
+  },
+};
+const NUMBER_OUT: Tool = {
+  ...FETCH,
+  manifest: {
+    ...FETCH.manifest,
+    name: "number-tool",
+    outputShape: { type: "number" },
+  },
+};
 
 const TOOLS: Record<string, Tool> = {
   "read-csv": FETCH,
@@ -250,4 +266,50 @@ test("lift: runtime binding ids are translated to slice-local ids", () => {
   const wf = (out as { ok: true; workflow: { steps: Array<{ resultBinding: string; arguments: Record<string, { ref?: string }> }> } }).workflow;
   assert.equal(wf.steps[0]!.resultBinding, "r_0_fetch");
   assert.equal(wf.steps[1]!.arguments.input!.ref, "r_0_fetch");
+});
+
+test("lift: outputShape derived from last step's tool manifest", () => {
+  const out = liftFromTrace({
+    slice: [
+      { name: "read-csv", args: {}, ok: true, value: ["row"] },
+      { name: "string-tool", args: { rows: ["row"] }, ok: true, value: "result" },
+    ],
+    name: "csv-to-string",
+    description: "",
+    goal: "",
+    toolsByName: { "read-csv": FETCH, "string-tool": STRING_OUT },
+  });
+  assert.equal(out.ok, true);
+  if (!out.ok) return;
+  assert.deepEqual(out.manifest.outputShape, { type: "string" });
+});
+
+test("lift: outputShape is last step's shape, not first step's", () => {
+  const out = liftFromTrace({
+    slice: [
+      { name: "number-tool", args: {}, ok: true, value: 1 },
+      { name: "string-tool", args: { n: 1 }, ok: true, value: "done" },
+    ],
+    name: "num-then-str",
+    description: "",
+    goal: "",
+    toolsByName: { "number-tool": NUMBER_OUT, "string-tool": STRING_OUT },
+  });
+  assert.equal(out.ok, true);
+  if (!out.ok) return;
+  assert.deepEqual(out.manifest.outputShape, { type: "string" });
+});
+
+test("lift: outputShape falls back to {} when last step's tool has outputShape {}", () => {
+  const out = liftFromTrace({
+    slice: [{ name: "read-csv", args: {}, ok: true, value: ["row"] }],
+    name: "just-read",
+    description: "",
+    goal: "",
+    toolsByName: { "read-csv": FETCH },
+  });
+  assert.equal(out.ok, true);
+  if (!out.ok) return;
+  // FETCH.manifest.outputShape is {} — derives through
+  assert.deepEqual(out.manifest.outputShape, {});
 });

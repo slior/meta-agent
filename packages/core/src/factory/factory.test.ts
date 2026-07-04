@@ -303,3 +303,114 @@ describe("createWorkflow and previewWorkflow", () => {
     assert.equal(await wfRegistry.has("original-name"), false);
   });
 });
+
+// A draft whose code always returns the wrong shape (string instead of declared number)
+const WRONG_OUTPUT_DRAFT: ToolDraft = {
+  name: "wrong-output",
+  description: "Returns wrong shape.",
+  rationale: "test",
+  inputSchema: { type: "object" },
+  outputShape: { type: "object", properties: { n: { type: "number" } }, required: ["n"] },
+  permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+  code: `export async function run(_i) { return { n: "oops" }; }`,
+  dependencies: [],
+  smokeTestInput: {},
+  kind: "atomic",
+};
+
+// A draft that fixes the shape on retry
+const FIXED_OUTPUT_DRAFT: ToolDraft = {
+  ...WRONG_OUTPUT_DRAFT,
+  code: `export async function run(_i) { return { n: 42 }; }`,
+};
+
+test("factory: smoke output violating outputShape enters repair loop and succeeds on fix", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fac-osv-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    // LLM: first returns wrong draft, second (repair) returns fixed draft
+    const llm = new MockLLMProvider()
+      .onStructured<ToolDraft>(() => WRONG_OUTPUT_DRAFT)
+      .onStructured<ToolDraft>(() => FIXED_OUTPUT_DRAFT);
+    const prompter = {
+      promptGate1: async () => ({ kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false }),
+      promptGate23: async () => { throw new Error("no"); },
+    };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const out = await factory.createAtomic({ intent: "test", rationale: "test", existingToolsConsidered: [] });
+    assert.equal(out.ok, true, `expected ok:true but got: ${JSON.stringify(out)}`);
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("factory: smoke output violating outputShape exhausts repair and rejects tool", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fac-osv-exhaust-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    // LLM always returns the wrong draft (maxRepair = 2 by default, so 3 total structured calls)
+    const llm = new MockLLMProvider()
+      .onStructured<ToolDraft>(() => WRONG_OUTPUT_DRAFT)
+      .onStructured<ToolDraft>(() => WRONG_OUTPUT_DRAFT)
+      .onStructured<ToolDraft>(() => WRONG_OUTPUT_DRAFT);
+    const prompter = {
+      promptGate1: async () => { throw new Error("should not reach Gate 1"); },
+      promptGate23: async () => { throw new Error("no"); },
+    };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const out = await factory.createAtomic({ intent: "test", rationale: "test", existingToolsConsidered: [] });
+    assert.equal(out.ok, false);
+    if (!out.ok) {
+      assert.ok(
+        out.reason.includes("outputShape") || out.reason.includes("output_schema"),
+        `expected outputShape error in reason, got: ${out.reason}`,
+      );
+    }
+    assert.equal(await registry.has("wrong-output"), false, "rejected tool must not be in registry");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("factory: presentAndSave re-validates edited draft and rejects if output violates outputShape", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fac-edit-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const llm = new MockLLMProvider().onStructured<ToolDraft>(() => GOOD_DRAFT);
+    // Gate 1 reviewer returns an edited draft whose code now returns the wrong shape
+    const brokenEditedDraft: ToolDraft = {
+      ...GOOD_DRAFT,
+      code: `export async function run(i){ return { doubled: "oops" }; }`,  // string instead of integer
+    };
+    const prompter = {
+      promptGate1: async (payload: Gate1ReviewPayload) => ({
+        kind: GATE1_KIND.CODE,
+        decision: APPROVAL_DECISION.APPROVE,
+        alwaysApprove: false,
+        ...(payload.kind === GATE1_KIND.CODE ? { editedDraft: brokenEditedDraft } : {}),
+      }),
+      promptGate23: async () => { throw new Error("no"); },
+    };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const tracer = await Tracer.open(join(dir, "traces"), "s");
+    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+
+    const out = await factory.createAtomic({ intent: "test", rationale: "test", existingToolsConsidered: [] });
+    assert.equal(out.ok, false, "edited draft with wrong output shape must be rejected");
+    assert.equal(await registry.has("double-int"), false, "broken tool must not be in registry");
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

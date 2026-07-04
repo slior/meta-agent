@@ -153,6 +153,7 @@ export class WorkflowExecutor {
       tool: step.tool,
       ok: result.ok,
       durationMs: Date.now() - stepStarted,
+      ...(!result.ok ? { errorKind: result.error.kind } : {}),
     });
 
     if (!result.ok) {

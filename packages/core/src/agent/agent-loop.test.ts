@@ -682,6 +682,77 @@ test("agent: workflow wrapper calls onToolInvoked at depth 0 on success", async 
   }
 });
 
+// ─── output schema violation ──────────────────────────────────────────────────
+
+const OUTPUT_VIOLATION_TOOL = makeConsistentTool(
+  {
+    name: "wrong-shape",
+    description: "Returns wrong shape on purpose.",
+    rationale: "test",
+    inputSchema: { type: "object" },
+    // Declares number, but code returns a string
+    outputShape: { type: "object", properties: { count: { type: "number" } }, required: ["count"] },
+    permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+    dependencies: [],
+    limits: { timeoutMs: 5000, maxOldSpaceSizeMb: 64 },
+    createdAt: "2026-01-01T00:00:00Z",
+    kind: "atomic",
+  },
+  // Returns { count: "oops" } — a string instead of the declared number
+  `export async function run(_i) { return { count: "oops" }; }`,
+);
+
+test("agent: output_schema_violation returned to LLM and value not stored in ResultStore", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-osv-"));
+  try {
+    const registry = await FsToolRegistry.open(join(dir, "tools"));
+    await registry.save(OUTPUT_VIOLATION_TOOL, makeConsistentApproval(OUTPUT_VIOLATION_TOOL));
+    const index = await HybridToolIndex.open(registry);
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
+    const prompter = {
+      promptGate1: async () => { throw new Error("no"); },
+      promptGate23: async () => ({ decision: APPROVAL_DECISION.APPROVE, cacheForSession: false }),
+    };
+    const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
+    const events: TraceEvent[] = [];
+    const tracer = await Tracer.open(join(dir, "traces"), "s", { observers: [(e) => events.push(e)] });
+
+    let invokedBinding: string | undefined = "sentinel"; // truthy sentinel
+    const llm = new MockLLMProvider()
+      .onChat(() => asst(null, [{ id: "i1", name: META_FN.invokeTool, args: { name: "wrong-shape", args: {} } }]))
+      .onChat(() => asst("done"));
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
+    const loop = new AgentLoop({
+      llm, registry, index, sandbox, approval, factory, tracer,
+      onToolInvoked: (ev) => { invokedBinding = ev.binding; },
+    });
+
+    await loop.run("invoke wrong-shape");
+
+    // 1. The result returned to the LLM must be ok:false with the new error kind
+    const secondReq = llm.calls.chat[1];
+    assert.ok(secondReq);
+    const toolMsg = secondReq.messages.find((m) => m.role === CHAT_ROLE.tool);
+    assert.ok(toolMsg, "expected a tool message in second chat call");
+    const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error?.kind, TOOL_ERROR_KIND.OUTPUT_SCHEMA_VIOLATION);
+
+    // 2. TRACE_KIND_TOOL_INVOKED must carry errorKind
+    const invokedEvent = events.find((e) => e.kind === TRACE_KIND_TOOL_INVOKED && e.data.ok === false);
+    assert.ok(invokedEvent, "expected a failed TRACE_KIND_TOOL_INVOKED event");
+    assert.equal(invokedEvent.data.errorKind, TOOL_ERROR_KIND.OUTPUT_SCHEMA_VIOLATION);
+
+    // 3. The bad value must NOT be stored in ResultStore (no binding assigned)
+    assert.equal(invokedBinding, undefined, "output_schema_violation must not produce a ResultStore binding");
+
+    await tracer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("agent: propose_new_tool requires find_tool first", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-"));
   try {

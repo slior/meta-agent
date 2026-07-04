@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkflowExecutor } from "./executor.ts";
-import { Tracer } from "../tracer.ts";
+import { Tracer, TRACE_KIND_WORKFLOW_STEP_END, type TraceEvent } from "../tracer.ts";
 import type { Workflow } from "./types.ts";
 import type { ToolResult } from "../types.ts";
 
@@ -215,6 +215,32 @@ test("executor: optional input uses supplied value when provided, not default", 
     if (res.ok) assert.deepEqual(res.value, { path: "/custom" });
   } finally {
     await tracer.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executor: failed step emits errorKind in TRACE_KIND_WORKFLOW_STEP_END", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exec-err-"));
+  try {
+    const events: TraceEvent[] = [];
+    const tracer = await Tracer.open(join(dir, "traces"), "s", {
+      observers: [(e) => events.push(e)],
+    });
+
+    const dispatch = async (): Promise<ToolResult> => ({
+      ok: false,
+      error: { kind: "runtime_error", message: "boom" },
+    });
+    const exec = new WorkflowExecutor({ tracer });
+    await exec.run(TWO_STEP, {}, dispatch, 0);
+
+    const stepEndEvent = events.find(
+      (e) => e.kind === TRACE_KIND_WORKFLOW_STEP_END && e.data.ok === false,
+    );
+    assert.ok(stepEndEvent, "expected a failed workflow-step-end event");
+    assert.equal(stepEndEvent.data.errorKind, "runtime_error");
+    await tracer.close();
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

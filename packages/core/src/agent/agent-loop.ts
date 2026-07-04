@@ -27,6 +27,7 @@ import {
   type Tracer,
 } from "../tracer.ts";
 import { ResultStore, describeForModel, resolveRefs, sanitizeBinding } from "./result-store.ts";
+import { validateToolOutput } from "./validate-tool-output.ts";
 import { coerceStringifiedJsonInput, rootJsonSchemaKind } from "./coerce-tool-input.ts";
 import { renderSystemPrompt } from "./system-prompt.ts";
 import { FIND_TOOL_TOP_K, META_FN, META_TOOL_DEFS, META_TOOL_NAMES } from "./meta-tools.ts";
@@ -582,19 +583,35 @@ export class AgentLoop {
       return result;
     }
 
-    this.opts.tracer.log(TRACE_KIND_TOOL_INVOKED, { name, duration: durationMs, ok: result.ok });
+    // Enforce the output contract before tracing or storing; a violation here downgrades
+    // effectiveResult so the trace and stored binding reflect the true outcome, not a false success.
+    let effectiveResult: ToolResult = result;
+    if (result.ok) {
+      const outputCheck = validateToolOutput(tool.manifest.outputShape, result.value);
+      if (!outputCheck.ok) effectiveResult = outputCheck;
+    }
+
+    this.opts.tracer.log(TRACE_KIND_TOOL_INVOKED, {
+      name,
+      duration: durationMs,
+      ok: effectiveResult.ok,
+      ...(!effectiveResult.ok ? { errorKind: effectiveResult.error.kind } : {}),
+    });
     if (depth === 0) {
-      const binding = this.storeDepth0Result(name, result);
+      const binding = this.storeDepth0Result(name, effectiveResult);
       this.opts.onToolInvoked?.({
-        name, args: recordArgs, ok: result.ok, durationMs,
-        value: result.ok ? result.value : undefined,
+        name, args: recordArgs, ok: effectiveResult.ok, durationMs,
+        value: effectiveResult.ok ? effectiveResult.value : undefined,
         ...(binding !== null ? { binding } : {}),
       });
     } else {
-      this.opts.onToolInvoked?.({ name, args: input, ok: result.ok, durationMs, value: result.ok ? result.value : undefined });
+      this.opts.onToolInvoked?.({
+        name, args: input, ok: effectiveResult.ok, durationMs,
+        value: effectiveResult.ok ? effectiveResult.value : undefined,
+      });
     }
-    if (result.ok) task.invokedThisSession.add(name);
-    return result;
+    if (effectiveResult.ok) task.invokedThisSession.add(name);
+    return effectiveResult;
   }
 }
 

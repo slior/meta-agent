@@ -15,6 +15,7 @@ import {
   TRACE_KIND_TOOL_REJECTED,
   type Tracer,
 } from "../tracer.ts";
+import { validateToolOutput } from "../agent/validate-tool-output.ts";
 import { liftFromTrace, inputSchemaFromInputs, type Invocation, type LiftResult, type LiteralFallback } from "../workflow/lift.ts";
 import { parameterize, type Promotion } from "../workflow/parameterize.ts";
 import { validate as validateWorkflow } from "../workflow/validator.ts";
@@ -261,13 +262,44 @@ export class ToolFactory {
         const v = staticValidateDraft(draft, { existingNames, tombstoned: this.opts.tombstoned });
         if (!v.ok) continue;
         const retry = await this.smokeTest(this.draftToTool(draft), draft.smokeTestInput);
-        if (retry.ok) { return this.presentAndSave(draft, retry); }
+        if (retry.ok) { return this.presentAndSave(draft, retry, existingNames); }
       }
       this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, { name: draft.name, reason: `smoke: ${smoke.error.message}` });
       return { ok: false, reason: `smoke test failed: ${smoke.error.message}` };
     }
 
-    return this.presentAndSave(draft, smoke);
+    // Check smoke output against declared outputShape; enter repair loop if violated.
+    const outputCheck = validateToolOutput(draft.outputShape, smoke.value);
+    if (!outputCheck.ok) {
+      attempts = 0;
+      // currentFailure tracks the actual current error so each repair call
+      // receives up-to-date feedback, not the original message.
+      let currentFailure = `smoke output does not match outputShape: ${outputCheck.error.message}`;
+      while (attempts < this.maxRepair) {
+        attempts++;
+        draft = await this.repair(draft, [currentFailure]);
+        const v = staticValidateDraft(draft, { existingNames, tombstoned: this.opts.tombstoned });
+        if (!v.ok) {
+          currentFailure = `static validation: ${v.errors.join("; ")}`;
+          continue;
+        }
+        const retry = await this.smokeTest(this.draftToTool(draft), draft.smokeTestInput);
+        if (!retry.ok) {
+          currentFailure = `smoke test failed: ${retry.error.kind}: ${retry.error.message}`;
+          continue;
+        }
+        const retryCheck = validateToolOutput(draft.outputShape, retry.value);
+        if (retryCheck.ok) { return this.presentAndSave(draft, retry, existingNames); }
+        currentFailure = `smoke output does not match outputShape: ${retryCheck.error.message}`;
+      }
+      this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, {
+        name: draft.name,
+        reason: `smoke output schema: ${currentFailure}`,
+      });
+      return { ok: false, reason: currentFailure };
+    }
+
+    return this.presentAndSave(draft, smoke, existingNames);
   }
 
   /**
@@ -304,10 +336,15 @@ export class ToolFactory {
    * Runs Gate 1 approval for a validated and smoke-tested code draft, applies final edits if present,
    * emits the tool to the registry, and logs creation. Wraps the draft in a `{ kind: GATE1_KIND.CODE }` payload.
    *
+   * If the reviewer returns an `editedDraft`, re-runs full creation-time validation (static,
+   * smoke test, output-shape check) before saving. Fails immediately on any re-validation error
+   * with no retry loop.
+   *
    * @param draft The draft (possibly LLM-generated/edited)
    * @param smoke The passing smoke test result
+   * @param existingNames Tool names already in the registry (for duplicate-name static check)
    */
-  private async presentAndSave(draft: ToolDraft, smoke: ToolResult): Promise<FactoryOutcome> {
+  private async presentAndSave(draft: ToolDraft, smoke: ToolResult, existingNames: Set<string>): Promise<FactoryOutcome> {
     const decision = await this.opts.approval.reviewDraft({ kind: GATE1_KIND.CODE, draft, smoke });
     if (decision.kind !== GATE1_KIND.CODE) {
       return { ok: false, reason: "unexpected decision kind from Gate 1 review" };
@@ -316,7 +353,41 @@ export class ToolFactory {
       this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, { name: draft.name, reason: decision.reason });
       return { ok: false, reason: decision.reason };
     }
+
     const finalDraft = decision.editedDraft ?? draft;
+
+    // If the reviewer edited the draft, re-run full creation-time validation before saving.
+    // No retry loop — if the reviewer's edit is broken, surface the failure directly.
+    if (decision.editedDraft) {
+      const sv = staticValidateDraft(finalDraft, { existingNames, tombstoned: this.opts.tombstoned });
+      if (!sv.ok) {
+        this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, {
+          name: finalDraft.name,
+          reason: `edit failed static: ${sv.errors.join("; ")}`,
+        });
+        return { ok: false, reason: `edited draft failed static validation: ${sv.errors.join("; ")}` };
+      }
+      const editSmoke = await this.smokeTest(this.draftToTool(finalDraft), finalDraft.smokeTestInput);
+      if (!editSmoke.ok) {
+        this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, {
+          name: finalDraft.name,
+          reason: `edit failed smoke: ${editSmoke.error.message}`,
+        });
+        return { ok: false, reason: `edited draft failed smoke test: ${editSmoke.error.message}` };
+      }
+      const editOutputCheck = validateToolOutput(finalDraft.outputShape, editSmoke.value);
+      if (!editOutputCheck.ok) {
+        this.opts.tracer.log(TRACE_KIND_TOOL_REJECTED, {
+          name: finalDraft.name,
+          reason: `edit failed output schema: ${editOutputCheck.error.message}`,
+        });
+        return {
+          ok: false,
+          reason: `edited draft output does not match outputShape: ${editOutputCheck.error.message}`,
+        };
+      }
+    }
+
     const tool = this.draftToTool(finalDraft);
     const approval: ApprovalRecord = {
       hash: tool.manifest.hash,

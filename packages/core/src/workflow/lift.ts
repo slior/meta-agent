@@ -79,6 +79,25 @@ export type LiftResult =
 /** Tool names may be kebab-case; bindings must match validator `BINDING_NAME` (no hyphens). */
 const SAFE_NAME = /[^a-z0-9_]/gi;
 
+/**
+ * Derives the workflow's `outputShape` from the last step's tool manifest.
+ * Returns `{}` when there are no steps, when the last step discards its result
+ * (`resultBinding === null`), or when the last step's tool is not found in `toolsByName`.
+ *
+ * @param steps - The computed `ToolCallStep[]` for the workflow being lifted.
+ * @param toolsByName - Registry snapshot keyed by tool name.
+ * @returns An object-form JSON Schema for the workflow's output contract.
+ */
+function deriveWorkflowOutputShape(
+  steps: ToolCallStep[],
+  toolsByName: Record<string, Tool>,
+): Record<string, unknown> {
+  if (steps.length === 0) return {};
+  const lastStep = steps[steps.length - 1]!;
+  if (lastStep.resultBinding === null) return {};
+  return toolsByName[lastStep.tool]?.manifest.outputShape ?? {};
+}
+
 function sanitize(name: string): string {
   return name.replace(SAFE_NAME, "_").toLowerCase();
 }
@@ -137,7 +156,7 @@ export function liftFromTrace(req: LiftRequest): LiftResult {
   const manifest: Omit<ToolManifest, "hash"> = {
     name: req.name, description: req.description,
     rationale: req.goal, inputSchema: {},
-    outputShape: {}, permissions,
+    outputShape: deriveWorkflowOutputShape(steps, req.toolsByName), permissions,
     dependencies, limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
     createdAt: new Date().toISOString(), kind: TOOL_KIND.WORKFLOW,
   };
