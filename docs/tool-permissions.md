@@ -45,7 +45,7 @@ The key idea: there are **two layers** that work together.
 
 These are related but different:
 - A tool may be *capable* of network access (manifest says so), but still be blocked at runtime by approval prompts.
-- In YOLO mode, approval prompts are bypassed, but capability boundaries still exist.
+- In YOLO mode, Gate 2/3 execution prompts are bypassed; Gate 1 creation review still prompts. Capability boundaries still apply.
 
 ---
 
@@ -117,7 +117,7 @@ Global policy and runtime knobs:
 
 Relevant to permission behavior:
 - `workspace`: used by risk-tier logic (`inside workspace` vs `outside workspace`) and always included in read allowlist.
-- `yolo`: bypasses approval prompting policy.
+- `yolo`: bypasses Gate 2/3 execution approval prompts (Gate 1 creation review always prompts).
 - `sandbox.maxDepth`: composite recursion guard.
 - `sandbox.maxOutputBytes`: output cap guard.
 
@@ -310,23 +310,24 @@ YOLO can be enabled two ways:
 - config: `"yolo": true`
 - CLI: `--yolo` (overrides config for this run)
 
-Current implementation behavior:
-- **Gate 1 reviewDraft:** auto-approve with `alwaysApprove: true`
-- **Gate 2/3 checkExecution:** auto-approve without prompts
+Implementation behavior:
+- **Gate 1 reviewDraft:** always prompts — yolo does not skip Gate 1 creation review.
+- **Gate 2/3 checkExecution:** auto-approve without prompts.
 
-So YOLO bypasses the human approval workflow entirely.
+YOLO removes execution prompts (Gate 2/3); Gate 1 creation review is always interactive.
 
 What YOLO **does not** bypass:
+- Gate 1 creation review (always prompts)
 - static draft validation
 - schema validation at invocation time
 - sandbox capability boundaries (manifest-derived flags still apply)
 - runtime limits (timeout, output cap, recursion depth)
 
 In short:
-- normal mode = **capability boundaries + human gates**
-- YOLO mode = **capability boundaries only**
+- normal mode  = **capability boundaries + Gate 1 review + Gate 2/3 execution prompts**
+- YOLO mode    = **capability boundaries + Gate 1 review** (execution runs without Gate 2/3 prompts)
 
-This is why YOLO is fast but higher-risk from a review perspective.
+This is why YOLO speeds up the execution loop while preserving the human review of generated tool code.
 
 ---
 
@@ -404,7 +405,7 @@ Result: no permission laundering through composition.
 ## Flow 6: same elevated tool in YOLO mode
 
 1. Start CLI with `--yolo`.
-2. Tool creation: no Gate 1 prompt.
+2. Tool creation: Gate 1 prompt shown as normal — yolo does not skip it.
 3. Tool execution: no Gate 2/3 prompt.
 4. Tool still constrained by manifest:
    - if host not in `netAllowlist`, fetch shim blocks

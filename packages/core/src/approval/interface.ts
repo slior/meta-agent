@@ -123,7 +123,7 @@ export interface ApprovalPolicy {
   checkExecution(tool: Tool, args: unknown, approval: ApprovalRecord | null): Promise<ExecutionDecision>;
 
   /**
-   * If true, the policy auto-approves everything (yolo mode).
+   * When true, Gate 2/3 execution prompts are auto-approved. Gate 1 creation review is unaffected.
    */
   readonly yolo: boolean;
 }

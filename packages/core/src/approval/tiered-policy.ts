@@ -1,7 +1,6 @@
 import { PERMISSIONS_NET, type ApprovalRecord, type Permissions, type Tool } from "../types.ts";
 import {
   APPROVAL_DECISION,
-  GATE1_KIND,
   type ApprovalPolicy,
   type ApprovalPrompter,
   type ExecutionDecision,
@@ -12,9 +11,6 @@ import {
 } from "./interface.ts";
 
 const SECRET_PATTERN = /TOKEN|KEY|SECRET|PASS/i;
-
-/** Notes recorded on Gate 1 decisions when {@link TieredApprovalPolicy} runs in yolo mode. */
-const YOLO_GATE1_NOTE = "yolo";
 
 function pathOutsideWorkspace(path: string, workspace: string): boolean {
   const norm = path.replace(/\/+$/, "");
@@ -43,13 +39,17 @@ export function riskTier(perms: Permissions, workspace: string): RiskTier {
 export type TieredOpts = {
   /** Absolute workspace root for path-scoped risk assessment. */
   workspace: string;
-  /** When true, auto-approves Gate 1 and Gate 2/3 without prompting. */
+  /**
+   * When true, auto-approves Gate 2/3 execution prompts without prompting.
+   * Gate 1 creation review always prompts regardless of this flag.
+   */
   yolo?: boolean;
 };
 
 /**
- * Default {@link ApprovalPolicy}: tiered execution prompts with optional session caching,
- * hash-mismatch re-prompting, and yolo bypass mode.
+ * Default {@link ApprovalPolicy}: Gate 1 always prompts; Gate 2/3 uses tiered execution
+ * prompts with optional session caching, hash-mismatch re-prompting, and optional yolo
+ * execution bypass (Gate 2/3 only).
  */
 export class TieredApprovalPolicy implements ApprovalPolicy {
   readonly yolo: boolean;
@@ -69,14 +69,13 @@ export class TieredApprovalPolicy implements ApprovalPolicy {
 
   /**
    * Gate 1 review for code or workflow creation payloads.
+   * Always delegates to the prompter regardless of {@link TieredApprovalPolicy.yolo}.
+   * The `yolo` flag only bypasses Gate 2/3 execution prompts.
    *
    * @param payload - Discriminated Gate 1 review payload.
    * @returns Approve/reject decision whose `kind` matches `payload.kind`.
    */
   async reviewDraft(payload: Gate1ReviewPayload): Promise<Gate1Decision> {
-    if (this.yolo) {
-      return this.yoloGate1Decision(payload);
-    }
     return this.prompter.promptGate1(payload);
   }
 
@@ -87,54 +86,50 @@ export class TieredApprovalPolicy implements ApprovalPolicy {
    * @param tool - Registered tool about to execute.
    * @param args - Invocation arguments shown to the reviewer when prompting.
    * @param approval - Prior Gate 1 approval record, or null when the tool has no saved approval.
-   * @returns Approve (with token and optional session cache) or reject.
+   * @returns Approve (optionally cached for the session) or reject.
    */
   async checkExecution(tool: Tool, args: unknown, approval: ApprovalRecord | null): Promise<ExecutionDecision> {
     if (this.yolo) {
       return this.approveExecution(false);
     }
 
-    if (approval === null || approval.hash !== tool.manifest.hash) {
+    if (!this.hasValidApproval(approval, tool.manifest.hash)) {
       return this.promptExecution(tool, args);
     }
 
     const tier = riskTier(tool.manifest.permissions, this.workspace);
     const cacheKey = tool.manifest.hash;
 
-    if (tier === RISK_TIER.LOW) {
-      return this.approveExecution(false);
-    }
-
-    if (approval.alwaysApprove) {
-      return this.approveExecution(false);
-    }
-
-    if (this.sessionCache.get(cacheKey)) {
+    if (this.canAutoApproveExecution(tier, approval, cacheKey)) {
       return this.approveExecution(false);
     }
 
     const decision = await this.promptExecution(tool, args, tier);
-    if (decision.decision === APPROVAL_DECISION.APPROVE && decision.cacheForSession) {
-      this.sessionCache.set(cacheKey, true);
-    }
+    this.cacheSessionApprovalIfRequested(decision, cacheKey);
     return decision;
   }
 
-  private yoloGate1Decision(payload: Gate1ReviewPayload): Gate1Decision {
-    if (payload.kind === GATE1_KIND.CODE) {
-      return {
-        kind: GATE1_KIND.CODE,
-        decision: APPROVAL_DECISION.APPROVE,
-        alwaysApprove: true,
-        notes: YOLO_GATE1_NOTE,
-      };
+  /** Type guard: saved approval exists and its hash matches the current manifest. */
+  private hasValidApproval(approval: ApprovalRecord | null, manifestHash: string): approval is ApprovalRecord {
+    return approval !== null && approval.hash === manifestHash;
+  }
+
+  /**
+   * True when Gate 2/3 can skip prompting: low tier, prior always-approve, or session cache hit.
+   *
+   * @param approval - Non-null binding approval (caller must have ruled out stale/missing).
+   */
+  private canAutoApproveExecution(tier: RiskTier, approval: ApprovalRecord, cacheKey: string): boolean {
+    if (tier === RISK_TIER.LOW) return true;
+    if (approval.alwaysApprove) return true;
+    return this.sessionCache.get(cacheKey) === true;
+  }
+
+  /** Records a session-scoped auto-approve when the reviewer chose cache-for-session. */
+  private cacheSessionApprovalIfRequested(decision: ExecutionDecision, cacheKey: string): void {
+    if (decision.decision === APPROVAL_DECISION.APPROVE && decision.cacheForSession) {
+      this.sessionCache.set(cacheKey, true);
     }
-    else return {
-      kind: GATE1_KIND.WORKFLOW,
-      decision: APPROVAL_DECISION.APPROVE,
-      alwaysApprove: false,
-      notes: YOLO_GATE1_NOTE,
-    };
   }
 
   /**

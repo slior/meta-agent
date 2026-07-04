@@ -81,7 +81,7 @@ Default: `"./traces"`.
 
 ### `yolo` (boolean)
 
-When `true`, the tiered approval policy **skips interactive prompts for running tools** that would normally ask the user. **Creating** new tools still goes through the approval flow unless your overall setup changes that elsewhere.
+When `true`, the tiered approval policy **skips interactive prompts for running tools** that would normally ask the user. **Creating** new tools always goes through the Gate 1 approval flow.
 
 Default: `false`.
 

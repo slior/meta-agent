@@ -187,32 +187,34 @@ test("reviewDraft non-yolo workflow: delegates to prompter with workflow payload
   assert.equal(result.decision, APPROVAL_DECISION.APPROVE);
 });
 
-test("reviewDraft yolo code: auto-approves without calling prompter, returns kind=code", async () => {
+test("reviewDraft yolo code: delegates to prompter (yolo does not skip Gate 1)", async () => {
+  let received: Gate1ReviewPayload | undefined;
   const prompter = {
-    promptGate1: async () => { throw new Error("should not be called"); },
+    promptGate1: async (p: Gate1ReviewPayload) => {
+      received = p;
+      return { kind: GATE1_KIND.CODE, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false };
+    },
     promptGate23: async () => { throw new Error("no"); },
   };
   const policy = new TieredApprovalPolicy(prompter, { workspace: "/w", yolo: true });
   const result = await policy.reviewDraft(mkCodePayload());
+  assert.equal(received?.kind, GATE1_KIND.CODE);
   assert.equal(result.kind, GATE1_KIND.CODE);
   assert.equal(result.decision, APPROVAL_DECISION.APPROVE);
-  if (result.kind === GATE1_KIND.CODE && result.decision === APPROVAL_DECISION.APPROVE) {
-    assert.equal(result.alwaysApprove, true);
-    assert.equal(result.notes, "yolo");
-  }
 });
 
-test("reviewDraft yolo workflow: auto-approves without calling prompter, returns kind=workflow", async () => {
+test("reviewDraft yolo workflow: delegates to prompter (yolo does not skip Gate 1)", async () => {
+  let received: Gate1ReviewPayload | undefined;
   const prompter = {
-    promptGate1: async () => { throw new Error("should not be called"); },
+    promptGate1: async (p: Gate1ReviewPayload) => {
+      received = p;
+      return { kind: GATE1_KIND.WORKFLOW, decision: APPROVAL_DECISION.APPROVE, alwaysApprove: false };
+    },
     promptGate23: async () => { throw new Error("no"); },
   };
   const policy = new TieredApprovalPolicy(prompter, { workspace: "/w", yolo: true });
   const result = await policy.reviewDraft(mkWorkflowPayload());
+  assert.equal(received?.kind, GATE1_KIND.WORKFLOW);
   assert.equal(result.kind, GATE1_KIND.WORKFLOW);
   assert.equal(result.decision, APPROVAL_DECISION.APPROVE);
-  if (result.kind === GATE1_KIND.WORKFLOW && result.decision === APPROVAL_DECISION.APPROVE) {
-    assert.equal(result.alwaysApprove, false);
-    assert.equal(result.notes, "yolo");
-  }
 });
