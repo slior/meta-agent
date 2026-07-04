@@ -169,11 +169,10 @@ export class NodePermissionSandbox implements Sandbox {
    *
    * @param tool The tool to execute.
    * @param args Input arguments for the tool.
-   * @param _approvalToken Token for runtime approval control (unused in current implementation).
    * @param opts Optional execution options, including custom tool file path, invocation handler, and recursion depth.
    * @returns The result of the tool execution as a ToolResult.
    */
-  async execute( tool: Tool, args: unknown, _approvalToken: string, opts: ExecuteOpts = {}, ): Promise<ToolResult> {
+  async execute(tool: Tool, args: unknown, opts: ExecuteOpts = {}): Promise<ToolResult> {
     if ((opts.depth ?? 0) > this.maxDepth) {
       return toolError("depth_exceeded", `composite recursion depth exceeded ${this.maxDepth}`);
     }

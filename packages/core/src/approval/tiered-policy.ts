@@ -1,4 +1,4 @@
-import { PERMISSIONS_NET, type ApprovalRecord, type ApprovalToken, type Permissions, type Tool } from "../types.ts";
+import { PERMISSIONS_NET, type ApprovalRecord, type Permissions, type Tool } from "../types.ts";
 import {
   APPROVAL_DECISION,
   GATE1_KIND,
@@ -138,32 +138,17 @@ export class TieredApprovalPolicy implements ApprovalPolicy {
   }
 
   /**
-   * Grants approval for execution by generating an approval token.
+   * Grants approval for execution.
    *
    * @param cacheForSession - Whether this approval should be cached for the session (bypassing further prompts for the same tool).
-   * @returns An {@link ExecutionDecision} object with "approve" status, a new {@link ApprovalToken}, and the specified session cache flag.
+   * @returns An {@link ExecutionDecision} object with "approve" status and the specified session cache flag.
    */
   private approveExecution(cacheForSession: boolean): ExecutionDecision {
-    return { decision: APPROVAL_DECISION.APPROVE, token: newToken(), cacheForSession };
+    return { decision: APPROVAL_DECISION.APPROVE, cacheForSession };
   }
 
   private promptExecution(tool: Tool, args: unknown, tier?: RiskTier): Promise<ExecutionDecision> {
     const resolvedTier = tier ?? riskTier(tool.manifest.permissions, this.workspace);
     return this.prompter.promptGate23(tool, args, resolvedTier);
   }
-}
-
-/**
- * Generates an opaque per-execution approval token passed to the sandbox on approve.
- *
- * Not cryptographically secure — fine here because the sandbox does not treat this as a secret
- * (it is an audit/hook identifier for an approved run in a local CLI session).
- */
-function newToken(): ApprovalToken {
-  /*
-   * Concatenates a random base-36 fragment (`Math.random().toString(36).slice(2)`, dropping the
-   * `"0."` prefix) with the current time in base-36. Together they make consecutive tokens in the
-   * same process practically unique without crypto or extra dependencies.
-   */
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }

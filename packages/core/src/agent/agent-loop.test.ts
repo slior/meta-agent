@@ -8,6 +8,7 @@ import { MockLLMProvider } from "../llm/mock-provider.ts";
 import { FsToolRegistry } from "../registry/fs-registry.ts";
 import { HybridToolIndex } from "../index-store/hybrid-index.ts";
 import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
+import { PolicyEnforcedSandbox } from "../sandbox/policy-enforced-sandbox.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { APPROVAL_DECISION, type ApprovalPolicy, type Gate1ReviewPayload } from "../approval/interface.ts";
 import { TRACE_KIND_EXECUTION_DENIED, TRACE_KIND_TOOL_INVOKED, Tracer, type TraceEvent } from "../tracer.ts";
@@ -15,7 +16,7 @@ import { ToolFactory } from "../factory/factory.ts";
 import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/LLMProvider.ts";
 import { META_FN } from "./meta-tools.ts";
 import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
-import type { ApprovalRecord, Tool } from "../types.ts";
+import { TOOL_ERROR_KIND, type ApprovalRecord, type Tool } from "../types.ts";
 
 const SAMPLE_BODY = "export async function run(i){return i;}";
 
@@ -60,12 +61,13 @@ test("agent: plain chat turn returns content", async () => {
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider().onChat(() => asst("hello!"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("hi");
@@ -81,15 +83,16 @@ test("agent: find_tool then stop", async () => {
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "1", name: META_FN.findTool, args: { query: "doesn't matter" } }]))
       .onChat(() => asst(null, [{ id: "2", name: META_FN.stop, args: { reason: "done" } }]))
       .onChat(() => asst("synthesized for user"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("search something");
@@ -120,15 +123,16 @@ test("agent: find_tool with hits does not inject empty-find recovery", async () 
     const alpha = sampleTool("alpha");
     await registry.save(alpha, makeConsistentApproval(alpha));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "1", name: META_FN.findTool, args: { query: "alpha" } }]))
       .onChat(() => asst(null, [{ id: "2", name: META_FN.stop, args: { reason: "done" } }]))
       .onChat(() => asst("ok"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("task");
@@ -150,7 +154,7 @@ test("agent: stop batched with other tools is deferred — next turn answer used
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       // Turn 0: both find_tool and stop in the same assistant message.
       // stop.reason is "ignored" because the model hasn't seen tool results yet.
@@ -162,8 +166,9 @@ test("agent: stop batched with other tools is deferred — next turn answer used
       .onChat(() => asst("grounded answer after tools"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("do something");
@@ -180,15 +185,16 @@ test("agent: synthesis falls back to stop.reason when content empty", async () =
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "1", name: META_FN.findTool, args: { query: "x" } }]))
       .onChat(() => asst(null, [{ id: "2", name: META_FN.stop, args: { reason: "fallback reason" } }]))
       .onChat(() => asst(null));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("q");
@@ -204,13 +210,14 @@ test("agent: stop alone (not batched) still returns stop reason immediately", as
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "s1", name: META_FN.stop, args: { reason: "direct stop" } }]));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("stop now");
@@ -226,7 +233,7 @@ test("agent: failed invoke_tool injects recovery user before next chat", async (
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() =>
         asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "missing-tool", args: {} } }]),
@@ -234,8 +241,9 @@ test("agent: failed invoke_tool injects recovery user before next chat", async (
       .onChat(() => asst("recovered"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("run missing tool");
@@ -267,14 +275,15 @@ test("agent: empty find_tool injects recovery user before next chat", async () =
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "f1", name: META_FN.findTool, args: { query: "anything" } }]))
       .onChat(() => asst("done"));
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("search");
@@ -358,14 +367,15 @@ test("agent: workflow inputSchema — missing required field yields schema_viola
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: {} } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     await loop.run("run the workflow without url");
     const secondReq = llm.calls.chat[1];
@@ -388,14 +398,15 @@ test("agent: workflow inputSchema — unknown key rejected when additionalProper
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com", extra: "bad" } } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     await loop.run("run the workflow with extra key");
     const secondReq = llm.calls.chat[1];
@@ -418,14 +429,15 @@ test("agent: workflow inputSchema — valid input dispatches to executor success
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     await loop.run("run the workflow with valid url");
     const secondReq = llm.calls.chat[1];
@@ -480,14 +492,15 @@ test("agent: workflow inputSchema — closed workflow (inputSchema: {}) accepts 
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(CLOSED_WF_TOOL, makeConsistentApproval(CLOSED_WF_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "closed-workflow", args: { url: "https://x" } } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     await loop.run("run the closed workflow with extra args");
     const secondReq = llm.calls.chat[1];
@@ -518,7 +531,7 @@ function makeTrackingPolicy(rejectName?: string): { policy: ApprovalPolicy; chec
       if (tool.manifest.name === rejectName) {
         return { decision: APPROVAL_DECISION.REJECT, reason: "test rejection" };
       }
-      return { decision: APPROVAL_DECISION.APPROVE, token: "test-token", cacheForSession: false };
+      return { decision: APPROVAL_DECISION.APPROVE, cacheForSession: false };
     },
   };
   return { policy, checkedNames };
@@ -531,13 +544,14 @@ test("agent: workflow wrapper checkExecution is called before executor runs", as
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const { policy, checkedNames } = makeTrackingPolicy();
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, policy, registry);
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval: policy, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval: policy, factory, tracer });
     await loop.run("run the workflow");
     // The workflow wrapper must be checked first, then the step tool.
@@ -557,13 +571,14 @@ test("agent: rejected workflow wrapper returns rejected_by_user without running 
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const { policy, checkedNames } = makeTrackingPolicy("fetch-and-double");
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, policy, registry);
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval: policy, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval: policy, factory, tracer });
     await loop.run("run the workflow");
     const secondReq = llm.calls.chat[1];
@@ -572,7 +587,7 @@ test("agent: rejected workflow wrapper returns rejected_by_user without running 
     assert.ok(toolMsg, "expected a tool message in the second chat call");
     const parsed = JSON.parse(toolMsg.content as string) as { ok: boolean; error?: { kind: string } };
     assert.equal(parsed.ok, false);
-    assert.equal(parsed.error?.kind, "rejected_by_user");
+    assert.equal(parsed.error?.kind, TOOL_ERROR_KIND.REJECTED_BY_USER);
     // The step tool must never have been checked — executor never ran.
     assert.ok(!checkedNames.includes("double"), "step tool must not be checked when wrapper is rejected");
     await tracer.close();
@@ -588,14 +603,15 @@ test("agent: workflow wrapper emits tool-invoked and not execution-denied on suc
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const captured: TraceEvent[] = [];
     const tracer = await Tracer.open(join(dir, "traces"), "s", { observers: [(e) => captured.push(e)] });
     const { policy } = makeTrackingPolicy();
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, policy, registry);
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval: policy, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval: policy, factory, tracer });
     await loop.run("run the workflow");
     const wrapperInvoked = captured.find(
@@ -617,14 +633,15 @@ test("agent: rejected workflow wrapper emits execution-denied trace event", asyn
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const captured: TraceEvent[] = [];
     const tracer = await Tracer.open(join(dir, "traces"), "s", { observers: [(e) => captured.push(e)] });
     const { policy } = makeTrackingPolicy("fetch-and-double");
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, policy, registry);
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval: policy, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval: policy, factory, tracer });
     await loop.run("run the workflow");
     const denied = captured.find(
@@ -644,13 +661,14 @@ test("agent: workflow wrapper calls onToolInvoked at depth 0 on success", async 
     await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
     await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
     const { policy } = makeTrackingPolicy();
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, policy, registry);
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "inv1", name: META_FN.invokeTool, args: { name: "fetch-and-double", args: { url: "http://example.com" } } }]))
       .onChat(() => asst("done"));
-    const factory = new ToolFactory({ llm, registry, sandbox, approval: policy, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval: policy, tracer, tombstoned: new Set() });
     const invokedNames: string[] = [];
     const loop = new AgentLoop({
       llm, registry, index, sandbox, approval: policy, factory, tracer,
@@ -669,14 +687,15 @@ test("agent: propose_new_tool requires find_tool first", async () => {
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "1", name: META_FN.proposeNewTool, args: { intent: "i", rationale: "r" } }]))
       .onChat(() => asst("I was told to find first."));
     const prompter = { promptGate1: async () => { throw new Error("no prompt expected"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
     const out = await loop.run("do it");

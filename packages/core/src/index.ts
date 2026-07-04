@@ -44,6 +44,7 @@ export { TracingLLMProvider } from "./llm/tracing-provider.ts";
 export { MockLLMProvider } from "./llm/mock-provider.ts";
 export type { Sandbox, InvokeToolHandler, ExecuteOpts } from "./sandbox/sandbox.ts";
 export { NodePermissionSandbox } from "./sandbox/node-permission-sandbox.ts";
+export { PolicyEnforcedSandbox } from "./sandbox/policy-enforced-sandbox.ts";
 export {
   SANDBOX_DEBUG_ENV,
   sandboxDebugEnabled,

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AgentLoop, APPROVAL_DECISION, CHAT_ROLE, CHAT_TOOL_TYPE, FsToolRegistry, GATE1_KIND, HybridToolIndex, META_FN, MockLLMProvider,
-  NodePermissionSandbox, TieredApprovalPolicy, ToolFactory, Tracer,
+  NodePermissionSandbox, PolicyEnforcedSandbox, TieredApprovalPolicy, ToolFactory, Tracer,
 } from "./index.ts";
 import type { ChatResponse, ToolDraft } from "./index.ts";
 
@@ -62,7 +62,7 @@ test("E2E: agent finds-nothing, proposes tool, then invokes it", async () => {
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider();
 
     llm
@@ -77,8 +77,9 @@ test("E2E: agent finds-nothing, proposes tool, then invokes it", async () => {
       promptGate23: async () => { throw new Error("no"); },
     };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir, yolo: false });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "e2e");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
     const loop = new AgentLoop({ llm, registry, index, sandbox, approval, factory, tracer });
 
     const out = await loop.run("please double 7");
@@ -95,7 +96,7 @@ test("E2E: composite invokeTool runs with no ambient authority (depth 1 inner ca
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider();
 
     llm
@@ -107,8 +108,9 @@ test("E2E: composite invokeTool runs with no ambient authority (depth 1 inner ca
       promptGate23: async () => { throw new Error("no"); },
     };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir, yolo: false });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "e2e2");
-    const factory = new ToolFactory({ llm, registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm, registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const a = await factory.createAtomic({ intent: "double", rationale: "base", existingToolsConsidered: [] });
     assert.equal(a.ok, true);

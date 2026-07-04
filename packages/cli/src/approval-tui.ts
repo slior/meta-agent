@@ -65,10 +65,6 @@ function isSessionApproveAnswer(answer: string): boolean {
   return trimmed === sessionApprove || trimmed === sessionApprove.toUpperCase();
 }
 
-function randomApprovalToken(): string {
-  return Math.random().toString(36).slice(2);
-}
-
 function printGate1Review(draft: ToolDraft, smokeTest: ToolResult): void {
   console.log(formatGate1Header());
   console.log(formatLabelValue("Name", draft.name));
@@ -177,7 +173,7 @@ export class CliApprovalPrompter implements ApprovalPrompter {
    * @param tool - Registered tool whose invocation is awaiting approval.
    * @param args - Serialized invocation arguments shown to the reviewer.
    * @param tier - Assessed risk tier for this execution.
-   * @returns Approve (with session cache flag and token) or reject.
+   * @returns Approve (with session cache flag) or reject.
    */
   async promptGate23(tool: Tool, args: unknown, tier: RiskTier): Promise<ExecutionDecision> {
     console.log(formatGate23Header(tool.manifest.name, tier));
@@ -190,7 +186,6 @@ export class CliApprovalPrompter implements ApprovalPrompter {
     }
     return {
       decision: APPROVAL_DECISION.APPROVE,
-      token: randomApprovalToken(),
       cacheForSession: isSessionApproveAnswer(answer),
     };
   }

@@ -6,6 +6,7 @@ import {
   FsToolRegistry,
   HybridToolIndex,
   NodePermissionSandbox,
+  PolicyEnforcedSandbox,
   OpenAIProvider,
   SANDBOX_DEBUG_ENV,
   seedBuiltins,
@@ -104,7 +105,7 @@ async function createReplSession(config: Config, apiKey: string): Promise<ReplSe
   if (integritySummary) process.stderr.write(`${integritySummary}\n`);
   await seedBuiltins(registry);
   const index = await HybridToolIndex.open(registry);
-  const sandbox = new NodePermissionSandbox({
+  const innerSandbox = new NodePermissionSandbox({
     workspace: config.workspace,
     maxDepth: config.sandbox.maxDepth,
     maxOutputBytes: config.sandbox.maxOutputBytes,
@@ -112,6 +113,7 @@ async function createReplSession(config: Config, apiKey: string): Promise<ReplSe
   const rl = readline.createInterface({ input, output });
   const prompter = new CliApprovalPrompter(rl);
   const approval = new TieredApprovalPolicy(prompter, { workspace: config.workspace, yolo: config.yolo });
+  const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
 
   const sessionId = Date.now().toString(SESSION_ID_RADIX);
   const tracer = await Tracer.open(config.tracesDir, sessionId, {
@@ -132,7 +134,7 @@ async function createReplSession(config: Config, apiKey: string): Promise<ReplSe
   const factory = new ToolFactory({
     llm,
     registry,
-    sandbox,
+    sandbox: innerSandbox,
     approval,
     tracer,
     tombstoned: new Set(),

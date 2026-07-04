@@ -8,6 +8,7 @@ import { MockLLMProvider } from "../llm/mock-provider.ts";
 import { FsToolRegistry } from "../registry/fs-registry.ts";
 import { HybridToolIndex } from "../index-store/hybrid-index.ts";
 import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
+import { PolicyEnforcedSandbox } from "../sandbox/policy-enforced-sandbox.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
@@ -52,11 +53,12 @@ test("agent passes a $ref to a later tool; recorded args keep the sentinel, tool
     await registry.save(fetch.tool, fetch.approval);
     await registry.save(summarize.tool, summarize.approval);
     const index = await HybridToolIndex.open(registry);
-    const sandbox = new NodePermissionSandbox({ workspace: dir });
+    const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
     const approval = new TieredApprovalPolicy(prompter, { workspace: dir });
+    const sandbox = new PolicyEnforcedSandbox(innerSandbox, approval, registry);
     const tracer = await Tracer.open(join(dir, "traces"), "s");
-    const factory = new ToolFactory({ llm: new MockLLMProvider(), registry, sandbox, approval, tracer, tombstoned: new Set() });
+    const factory = new ToolFactory({ llm: new MockLLMProvider(), registry, sandbox: innerSandbox, approval, tracer, tombstoned: new Set() });
 
     const llm = new MockLLMProvider()
       .onChat(() => asst(null, [{ id: "c1", name: META_FN.invokeTool, args: { name: "fetch", args: {} } }]))

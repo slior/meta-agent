@@ -99,19 +99,19 @@ test("E2E: lift trace to workflow and execute with parity", async () => {
     const invocations: Array<{ name: string; args: unknown; ok: boolean; value: unknown }> = [];
 
     // Step 1: double(5) = 10
-    const result1 = await sandbox.execute(DOUBLE_TOOL, { n: 5 }, "token");
+    const result1 = await sandbox.execute(DOUBLE_TOOL, { n: 5 });
     assert.equal(result1.ok, true);
     const inv0 = { name: "double", args: { n: 5 }, ok: result1.ok, value: result1.ok ? result1.value : null };
     invocations.push(inv0);
 
     // Step 2: add(10, 3) = 13
-    const result2 = await sandbox.execute(ADD_TOOL, { a: 10, b: 3 }, "token");
+    const result2 = await sandbox.execute(ADD_TOOL, { a: 10, b: 3 });
     assert.equal(result2.ok, true);
     const inv1 = { name: "add", args: { a: 10, b: 3 }, ok: result2.ok, value: result2.ok ? result2.value : null };
     invocations.push(inv1);
 
     // Step 3: square(13) = 169
-    const result3 = await sandbox.execute(SQUARE_TOOL, { n: 13 }, "token");
+    const result3 = await sandbox.execute(SQUARE_TOOL, { n: 13 });
     assert.equal(result3.ok, true);
     const inv2 = { name: "square", args: { n: 13 }, ok: result3.ok, value: result3.ok ? result3.value : null };
     invocations.push(inv2);
@@ -169,7 +169,7 @@ test("E2E: lift trace to workflow and execute with parity", async () => {
     const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
       const tool = await registry.get(name);
       if (!tool) return toolError("unknown_tool", name);
-      return sandbox.execute(tool, args, "token");
+      return sandbox.execute(tool, args);
     };
 
     const execResult = await executor.run(workflow, {}, dispatch, 0);
@@ -279,7 +279,7 @@ test("E2E: lift with dataflow dependencies", async () => {
     const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
       const tool = await registry.get(name);
       if (!tool) return toolError("unknown_tool", name);
-      return sandbox.execute(tool, args, "token");
+      return sandbox.execute(tool, args);
     };
 
     const result = await executor.run(workflow, {}, dispatch, 0);
@@ -320,7 +320,7 @@ test("E2E: parameterized workflow runs with caller inputs and defaults", async (
     const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
       const tool = await registry.get(name);
       if (!tool) return toolError("unknown_tool", name);
-      return sandbox.execute(tool, args, "token");
+      return sandbox.execute(tool, args);
     };
 
     // Provide both inputs.

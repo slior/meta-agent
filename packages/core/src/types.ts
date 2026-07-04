@@ -104,19 +104,20 @@ export type ApprovalRecord = {
   notes?: string;
 };
 
-/** Opaque token issued after Gate 2/3 execution approval for a single invoke. */
-export type ApprovalToken = string;
+/** Discriminator values for {@link ToolErrorKind} in {@link ToolResult} failures. */
+export const TOOL_ERROR_KIND = {
+  TIMEOUT: "timeout",
+  PERMISSION_DENIED: "permission_denied",
+  RUNTIME_ERROR: "runtime_error",
+  REJECTED_BY_USER: "rejected_by_user",
+  SCHEMA_VIOLATION: "schema_violation",
+  OUTPUT_TRUNCATED: "output_truncated",
+  DEPTH_EXCEEDED: "depth_exceeded",
+  UNKNOWN_TOOL: "unknown_tool",
+} as const;
 
 /** Discriminator for failures returned as {@link ToolResult}. */
-export type ToolErrorKind =
-  | "timeout"
-  | "permission_denied"
-  | "runtime_error"
-  | "rejected_by_user"
-  | "schema_violation"
-  | "output_truncated"
-  | "depth_exceeded"
-  | "unknown_tool";
+export type ToolErrorKind = (typeof TOOL_ERROR_KIND)[keyof typeof TOOL_ERROR_KIND];
 
 /** Structured error payload when {@link ToolResult.ok} is false. */
 export type ToolError = {

@@ -48,7 +48,7 @@ test("workflow step produces a value through the mediated llm capability", async
 
     const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
       if (name !== LLM_GENERATE_NAME) return toolError("unknown_tool", name);
-      return sandbox.execute(tool, args, "token", {
+      return sandbox.execute(tool, args, {
         onLLM: async (cap) => {
           const resp = await mock.chat({
             messages: [{ role: CHAT_ROLE.user, content: `${cap.instructions}` }],

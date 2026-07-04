@@ -9,10 +9,11 @@ import {
   type ToolCall,
   type ToolDef,
 } from "../llm/LLMProvider.ts";
-import type { LlmCapabilityRequest, Sandbox } from "../sandbox/sandbox.ts";
+import type { LlmCapabilityRequest } from "../sandbox/sandbox.ts";
+import { PolicyEnforcedSandbox } from "../sandbox/policy-enforced-sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
-import { TOOL_CAPABILITY, TOOL_KIND, type ApprovalToken, type Tool, type ToolResult } from "../types.ts";
+import { TOOL_CAPABILITY, TOOL_ERROR_KIND, TOOL_KIND, type Tool, type ToolResult } from "../types.ts";
 import {
   TRACE_KIND_EXECUTION_DENIED,
   TRACE_KIND_LLM_SYNTHESIS,
@@ -93,7 +94,7 @@ export type ToolInvokedEvent = {
  * @property {LLMProvider} llm - The language model provider used for message generation.
  * @property {ToolRegistry} registry - Registry for tool lookup and metadata.
  * @property {ToolIndex} index - Tool search/indexing system, used for find_tool operations.
- * @property {Sandbox} sandbox - Secure environment for tool execution.
+ * @property {PolicyEnforcedSandbox} sandbox - Policy-enforced sandbox for tool execution (Gate 2/3 checked before spawn).
  * @property {ApprovalPolicy} approval - Approval policy for gating tool executions.
  * @property {ToolFactory} factory - Factory used for proposing and constructing new tools.
  * @property {Tracer} tracer - Tracer for logging agent loop events and debugging.
@@ -104,7 +105,8 @@ export type AgentLoopOpts = {
   llm: LLMProvider;
   registry: ToolRegistry;
   index: ToolIndex;
-  sandbox: Sandbox;
+  /** Must be a {@link PolicyEnforcedSandbox}; ensures approval policy is in the execution path. */
+  sandbox: PolicyEnforcedSandbox;
   approval: ApprovalPolicy;
   factory: ToolFactory;
   tracer: Tracer;
@@ -402,13 +404,13 @@ export class AgentLoop {
       }
       case META_FN.proposeNewTool: {
         if (!task.findToolCalled)
-          return toolError("rejected_by_user", `call ${META_FN.findTool} at least once before proposing a new tool`);
+          return toolError(TOOL_ERROR_KIND.REJECTED_BY_USER, `call ${META_FN.findTool} at least once before proposing a new tool`);
         const out = await this.opts.factory.createAtomic({
           intent: String(args.intent ?? ""),
           rationale: String(args.rationale ?? ""),
           existingToolsConsidered: (args.existingToolsConsidered as string[] | undefined) ?? [],
         });
-        if (!out.ok) return toolError("rejected_by_user", out.reason);
+        if (!out.ok) return toolError(TOOL_ERROR_KIND.REJECTED_BY_USER, out.reason);
         return { ok: true, value: { name: out.tool.manifest.name, description: out.tool.manifest.description } };
       }
       case META_FN.proposeCompositeTool: {
@@ -417,7 +419,7 @@ export class AgentLoop {
           intent: String(args.intent ?? ""),
           plannedSteps: (args.plannedSteps as Array<{ tool: string; argsTemplate: string }> | undefined) ?? [],
         });
-        if (!out.ok) return toolError("rejected_by_user", out.reason);
+        if (!out.ok) return toolError(TOOL_ERROR_KIND.REJECTED_BY_USER, out.reason);
         return { ok: true, value: { name: out.tool.manifest.name, description: out.tool.manifest.description } };
       }
       case META_FN.stop:
@@ -498,7 +500,7 @@ export class AgentLoop {
       const wf = await this.opts.registry.getWorkflow(name);
       if (!wf) return toolError("unknown_tool", `workflow '${name}' not found`);
       return this.runWithApproval(tool, input, recordArgs, task, depth,
-        (_token) => this.executor.run(
+        () => this.executor.run(
           wf,
           input as Record<string, unknown>,
           (toolName, toolArgs, d) => this.dispatchTool(toolName, toolArgs, task, d),
@@ -508,8 +510,8 @@ export class AgentLoop {
     }
 
     const wantsLlm = tool.manifest.capabilities?.includes(TOOL_CAPABILITY.LLM) ?? false;
-    return this.runWithApproval(tool, input, recordArgs, task, depth,
-      (token) => this.opts.sandbox.execute(tool, input, token, {
+    return this.runWithTracing(tool, input, recordArgs, task, depth,
+      () => this.opts.sandbox.execute(tool, input, {
         depth,
         onInvokeTool: (subName, subArgs) => this.dispatchTool(subName, subArgs, task, depth + 1),
         ...(wantsLlm ? { onLLM: (req) => this.runLlmCapability(req) } : {}),
@@ -518,19 +520,17 @@ export class AgentLoop {
   }
 
   /**
-   * Shared approval gate, executor, tracer, and notification handler for all tool kinds.
+   * Approval gate for **workflow** tools, then tracing via {@link runWithTracing}.
    *
-   * After schema validation, every tool invocation — atomic, composite, or workflow — runs
-   * this path: `getApproval → checkExecution → reject-or-execute → trace → notify → track`.
-   * The tool-kind-specific execution logic is injected as `executeFn`; it receives the
-   * {@link ApprovalToken} issued by the policy (workflows may ignore it; the sandbox requires it).
+   * Sandbox tools use {@link runWithTracing} directly — their policy check is handled by
+   * {@link PolicyEnforcedSandbox}.
    *
    * @param tool Registered tool whose manifest drives the approval check.
    * @param input Validated, coerced invocation arguments.
    * @param recordArgs Unresolved arguments at depth 0, passed to `onToolInvoked` for lift.
    * @param task Current session context updated on successful invocation.
    * @param depth Recursion depth; controls `storeDepth0Result` and `onToolInvoked` shape.
-   * @param executeFn Tool-kind executor: sandbox for code tools, WorkflowExecutor for workflows.
+   * @param executeFn Workflow executor function.
    * @returns ToolResult from the executor, or a rejection error if the policy denies.
    */
   private async runWithApproval(
@@ -539,19 +539,49 @@ export class AgentLoop {
     recordArgs: unknown,
     task: Task,
     depth: number,
-    executeFn: (token: ApprovalToken) => Promise<ToolResult>,
+    executeFn: () => Promise<ToolResult>,
   ): Promise<ToolResult> {
     const name = tool.manifest.name;
     const approval = await this.opts.registry.getApproval(name);
     const decision = await this.opts.approval.checkExecution(tool, input, approval);
     if (decision.decision === APPROVAL_DECISION.REJECT) {
       this.opts.tracer.log(TRACE_KIND_EXECUTION_DENIED, { name, reason: decision.reason });
-      return toolError("rejected_by_user", decision.reason);
+      return toolError(TOOL_ERROR_KIND.REJECTED_BY_USER, decision.reason);
+    }
+    return this.runWithTracing(tool, input, recordArgs, task, depth, executeFn);
+  }
+
+  /**
+   * Executes a tool via `executeFn`, measures elapsed time, and logs the appropriate trace event.
+   * If the result is a `rejected_by_user` error (policy rejection surfaced by
+   * {@link PolicyEnforcedSandbox}), logs `TRACE_KIND_EXECUTION_DENIED` without calling
+   * `onToolInvoked`. All other results log `TRACE_KIND_TOOL_INVOKED` and call `onToolInvoked`.
+   *
+   * @param tool Tool whose manifest name is used for tracing.
+   * @param input Validated invocation arguments.
+   * @param recordArgs Unresolved args at depth 0 (forwarded to `onToolInvoked`).
+   * @param task Current session context.
+   * @param depth Recursion depth.
+   * @param executeFn Zero-argument thunk that runs the tool.
+   */
+  private async runWithTracing(
+    tool: Tool,
+    input: unknown,
+    recordArgs: unknown,
+    task: Task,
+    depth: number,
+    executeFn: () => Promise<ToolResult>,
+  ): Promise<ToolResult> {
+    const name = tool.manifest.name;
+    const started = Date.now();
+    const result = await executeFn();
+    const durationMs = Date.now() - started;
+
+    if (!result.ok && result.error.kind === TOOL_ERROR_KIND.REJECTED_BY_USER) {
+      this.opts.tracer.log(TRACE_KIND_EXECUTION_DENIED, { name, reason: result.error.message });
+      return result;
     }
 
-    const started = Date.now();
-    const result = await executeFn(decision.token);
-    const durationMs = Date.now() - started;
     this.opts.tracer.log(TRACE_KIND_TOOL_INVOKED, { name, duration: durationMs, ok: result.ok });
     if (depth === 0) {
       const binding = this.storeDepth0Result(name, result);

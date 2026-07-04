@@ -48,7 +48,7 @@ This split is what makes the abstraction boundaries real: the `core` package can
 
 ## 3. Architecture Overview
 
-The system is structured around five clearly-bounded components inside `core`. Each has a small interface; the POC ships one default implementation per interface.
+The system is structured around five clearly-bounded interfaces inside `core`, plus a default policy-enforcement wrapper (`PolicyEnforcedSandbox`) for agent-driven execution. Each interface has a small contract; the POC ships one default implementation per interface.
 
 ```mermaid
 flowchart TB
@@ -70,6 +70,7 @@ flowchart TB
     subgraph Impls["Default implementations"]
         FSR[FsToolRegistry<br/>./tools/*]
         HYB[HybridToolIndex<br/>catalog + substring]
+        PES[PolicyEnforcedSandbox<br/>Sandbox + checkExecution]
         NPS[NodePermissionSandbox<br/>child_process + --permission]
         TAP[TieredApprovalPolicy<br/>config-driven]
     end
@@ -82,29 +83,32 @@ flowchart TB
     TUI <--> AP
     AL --> TI
     AL --> TR
-    AL --> SB
+    AL --> PES
     AL --> TF
     AL --> TRC
     AL --> LLM
     TF --> AP
     TF --> TR
-    TF --> SB
-    SB --> AP
+    TF --> NPS
+    PES --> AP
+    PES --> NPS
 
     TR -.implements.- FSR
     TI -.implements.- HYB
-    SB -.implements.- NPS
+    SB -.interface.- NPS
+    PES -.implements.- SB
     AP -.implements.- TAP
 ```
 
 **Component responsibilities:**
 
-- **`AgentLoop`** — owns the conversation state, assembles the tool catalog for the system prompt, calls the LLM, dispatches tool calls, logs events. Knows nothing about filesystems, subprocesses, or prompts — depends only on the five interfaces.
+- **`AgentLoop`** — owns the conversation state, assembles the tool catalog for the system prompt, calls the LLM, dispatches tool calls, logs events. Depends on `PolicyEnforcedSandbox` (not a raw `Sandbox`) for atomic/composite execution, so Gate 2/3 approval is structurally in the path. Workflow tools call `checkExecution` in-loop before `WorkflowExecutor` runs.
 - **`ToolRegistry`** — CRUD over tools (load, save, delete, get by name, list, dependency lookup). Default = filesystem under `./tools/<name>/{tool.ts, manifest.json, approval.json}`.
 - **`ToolIndex`** — answers "given a natural-language query, which existing tools are relevant?" Default = hybrid (always-on mini-catalog in prompt + `find_tool` meta-tool using substring/BM25-lite over manifest text). Embedding-based implementation pluggable behind the same interface (Section 10).
-- **`Sandbox`** — given tool name, args, and manifest, runs the tool in a subprocess with Node `--permission` flags derived from the manifest; returns a structured `{ok, value} | {ok:false, error}`.
+- **`Sandbox`** — pure subprocess execution: given tool, args, and manifest, runs the tool under Node `--permission` flags; returns `{ok, value} | {ok:false, error}`. Has **no approval knowledge** — policy is the caller's responsibility.
+- **`PolicyEnforcedSandbox`** — wraps a raw `Sandbox` and calls `ApprovalPolicy.checkExecution` before every delegation. This is what `AgentLoop` receives at construction time; it makes accidental policy bypass structurally impossible for agent-driven tool runs.
 - **`ApprovalPolicy`** — single interface called at all three gates (creation, first execution, subsequent execution); tiered default policy decides whether to prompt, auto-approve, or auto-deny based on permission risk level and cached prior decisions keyed by code+manifest hash.
-- **`ToolFactory`** — the workflow that turns a "tool gap" signal into an approved tool in the registry: LLM code-gen → static validation → sandboxed smoke test → Gate 1 approval → registry write. Used for both greenfield tools and composite tools.
+- **`ToolFactory`** — the workflow that turns a "tool gap" signal into an approved tool in the registry: LLM code-gen → static validation → sandboxed smoke test → Gate 1 approval → registry write. Holds the **raw inner `Sandbox`** for smoke tests (pre-Gate-1; execution policy intentionally not applied).
 - **`Tracer`** — append-only JSONL log of every LLM turn, tool call, approval decision, and creation event.
 
 **Why these specific seams:** each interface corresponds to a dimension likely to evolve independently. You can swap the registry for SQLite without touching anything else; swap the index for embeddings without touching the sandbox; swap the approval policy for a web UI without touching the agent loop. The seams are chosen so that *changes* stay local.
@@ -134,7 +138,7 @@ sequenceDiagram
     alt validation fails
         F->>L: re-generate with error feedback<br/>(bounded retries, default 2)
     end
-    F->>S: smoke-test run (sandboxed, using draft's<br/>own declared permissions)
+    F->>S: smoke-test run (raw inner sandbox;<br/>no execution policy — pre-Gate-1)
     S-->>F: {ok, value} or {ok:false, error}
     alt smoke-test fails
         F->>L: repair-loop with error output<br/>(bounded retries)
@@ -194,6 +198,8 @@ Before the human sees anything, we run the draft in the real sandbox with its ow
 - Syntactic/runtime failures missed by static checks.
 - **Declared-permission mismatches** — tool says it doesn't need net but tries to `fetch`. This is the single highest-value security check: it aligns the *declared* permissions with the *actual* behavior before any human trusts either.
 
+Smoke tests call the **raw inner `Sandbox`** directly (via `ToolFactory`), not `PolicyEnforcedSandbox`. The draft has no Gate 1 approval yet, so execution policy (Gate 2/3) does not apply; OS-level `--permission` flags from the draft manifest are still enforced.
+
 If the sandbox denies a permission the tool needed, we prompt the LLM either to declare the missing permission (and re-review) or to rewrite without the dependency.
 
 ### 4.5 Gate 1 approval payload
@@ -252,49 +258,66 @@ Out of scope here: durable re-approval of a needs-review tool (it re-prompts eve
 
 ## 5. Execution Flow (Gates 2 and 3, Sandbox Protocol)
 
-Every time the agent calls an existing tool, this path runs.
+Every time the agent calls an existing **atomic or composite** tool, this path runs. **`PolicyEnforcedSandbox`** structurally enforces `ApprovalPolicy.checkExecution` before the inner sandbox spawns a subprocess.
+
+**Workflow tools** are different: they run in-process via `WorkflowExecutor`, not through the sandbox wrapper. `AgentLoop` calls `checkExecution` directly before invoking the executor. Nested step tools still re-enter the full dispatch path (including `PolicyEnforcedSandbox` for sandbox-backed steps).
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant A as AgentLoop
+    participant W as PolicyEnforcedSandbox
     participant R as ToolRegistry
     participant P as ApprovalPolicy
-    participant S as Sandbox (parent)
+    participant S as NodePermissionSandbox (inner)
     participant C as Tool subprocess
     participant T as Tracer
 
     A->>R: get(toolName)
     R-->>A: Tool {manifest, code, hash, approval}
-    A->>P: checkExecution(tool, args)
+    A->>W: execute(tool, args)
+    W->>R: getApproval(toolName)
+    W->>P: checkExecution(tool, args, approvalRecord)
     Note over P: Policy evaluates:<br/>- hash matches approval.json?<br/>- any elevated permissions?<br/>- cached decision for this hash+perms?
     alt first use OR elevated perms uncached
         P->>P: prompt reviewer (Gate 2/3)
-        P-->>A: approve (optionally cache) | reject
+        P-->>W: approve (optionally cache) | reject
     else auto-approve
-        P-->>A: approve
+        P-->>W: approve
     end
     alt rejected
-        A->>T: log(execution-rejected)
+        W-->>A: {ok:false, rejected_by_user}
+        A->>T: log(execution-denied)
         A-->>A: return structured error to LLM
     else approved
-        A->>S: execute(tool, args, approvalToken)
+        W->>S: execute(tool, args)
         S->>S: build CLI flags from manifest.permissions
         S->>C: spawn: node --permission<br/>--allow-fs-read=... --allow-fs-write=...<br/>--experimental-strip-types<br/>runner.ts tool.ts
         S->>C: write {args} to stdin as JSON
         C->>C: import tool.ts, call run(args)
         alt tool calls invokeTool (composite)
             C->>S: {"op":"invokeTool","name":"X","args":{...}}<br/>(stdout JSON-RPC)
-            S->>A: re-enter execution flow for X<br/>(recursion with depth cap)
+            S->>A: re-enter dispatch for X<br/>(recursion with depth cap)
             A-->>S: result
             S->>C: write result to stdin
         end
         C-->>S: {"ok":true,"value":...} on stdout<br/>(or {"ok":false,"error":...})
         S->>S: enforce timeout, memory limit,<br/>output size limit
-        S-->>A: result
+        S-->>W: result
+        W-->>A: result
         A->>T: log(tool-invoked, args-hash, result-hash, duration)
     end
 ```
+
+### 5.0 Policy enforcement at the sandbox seam
+
+| Caller | Sandbox handle | Policy check |
+|---|---|---|
+| **`AgentLoop`** (atomic/composite) | `PolicyEnforcedSandbox` | Inside wrapper: `checkExecution` before inner spawn |
+| **`AgentLoop`** (workflow wrapper) | N/A (in-process executor) | In-loop: `checkExecution` before `WorkflowExecutor.run` |
+| **`ToolFactory`** (smoke test) | Raw inner `NodePermissionSandbox` | None — draft is unapproved; OS permissions only |
+
+`AgentLoopOpts.sandbox` is typed as `PolicyEnforcedSandbox`, not `Sandbox`. A host wiring the agent cannot pass a raw sandbox and skip execution policy by mistake. `ToolFactory` intentionally receives the inner sandbox for pre-Gate-1 smoke tests.
 
 ### 5.1 Sandbox invocation details
 
@@ -369,9 +392,10 @@ This gives the agent a uniform way to reason about failures and decide whether t
 
 ### 5.6 Why these shapes
 
-- The **approval token** threaded from `ApprovalPolicy` into `Sandbox.execute` prevents an implementation bug where the sandbox "forgets" to consult policy — the sandbox signature *requires* the token, so policy is in the critical path by construction.
-- **No ambient authority on composite calls** (every nested `invokeTool` re-enters policy) means composites cannot launder permissions.
+- **`PolicyEnforcedSandbox`** wraps the raw sandbox and calls `checkExecution` before every agent-driven execution. `AgentLoop` requires this type at construction, so policy is in the critical path by structure — not by convention or a discardable parameter on `Sandbox.execute`.
+- **No ambient authority on composite calls** (every nested `invokeTool` re-enters policy via the wrapper) means composites cannot launder permissions.
 - **Structured error results, not thrown exceptions** crossing the sandbox boundary keeps the LLM's mental model simple and the trace log clean.
+- **Smoke tests bypass execution policy** via the factory's raw sandbox handle — intentional, because Gate 1 approval does not exist yet; OS `--permission` flags still apply.
 
 ### 5.7 Known trade-offs
 
@@ -559,6 +583,8 @@ Tools are identified by `name`, and pinned by `hash` in `approval.json` and in c
 
 Standard ReAct-style tool-calling loop against an OpenAI-compatible Chat Completions endpoint, driven through the official `openai` SDK.
 
+**Construction:** `AgentLoop` is wired with a `PolicyEnforcedSandbox` (wrapping a `NodePermissionSandbox`), not a raw `Sandbox`. `ToolFactory` in the same session receives the inner sandbox directly for smoke tests. See §5.0.
+
 ### 8.1 LLM client wiring
 
 The SDK is instantiated once and passed to `AgentLoop` (and to `ToolFactory`) behind a thin internal `LLMProvider` interface. The provider abstraction exists so tests can substitute a mock — **not** because we plan to swap SDKs. Concrete implementation:
@@ -720,7 +746,7 @@ meta-agent/
         tool-factory.ts
         tool-registry/        # interface + FsToolRegistry
         tool-index/           # interface + HybridToolIndex (catalog + substring)
-        sandbox/              # interface + NodePermissionSandbox, runner.ts
+        sandbox/              # interface + PolicyEnforcedSandbox, NodePermissionSandbox, runner.ts
         approval/             # interface + TieredApprovalPolicy
         tracer.ts
         llm/                  # LLMProvider interface + OpenAIProvider (uses `openai` SDK)
@@ -809,6 +835,8 @@ This section records every meaningful choice made during design and what alterna
 - *Warm worker pool instead of fresh process* — deferred: better perf but adds state-reset complexity; not needed for POC.
 
 **Why chosen:** real OS-enforced permission boundary, zero external deps, declarative per-tool permissions that compose naturally with the HITL model, straightforward implementation.
+
+**Execution policy:** agent-driven runs go through `PolicyEnforcedSandbox`, which calls `ApprovalPolicy.checkExecution` before delegating to the inner sandbox. The raw `Sandbox` interface is subprocess-only; it does not accept or verify approval state. See §5.0.
 
 **Trade-off accepted:** 20–80ms spawn cost per tool call.
 
@@ -927,6 +955,18 @@ This section records every meaningful choice made during design and what alterna
 - *Lazy verify-at-read* — rejected: conflicts with quarantine-removes-from-cache and repeats hashing on every read.
 
 **Why chosen:** smallest change that closes the H1 gap, centralizes the check where disk state enters memory, and reuses the existing `approval === null` seam. Keeping the verification core in its own module means the decorator upgrade (§12) is a cheap lift later — POC simplicity now, clean evolution path preserved.
+
+### 11.14 Execution policy enforcement at the sandbox seam
+
+**Chosen:** `PolicyEnforcedSandbox` wraps the raw `Sandbox` and calls `ApprovalPolicy.checkExecution` before every delegation. `AgentLoop` requires `PolicyEnforcedSandbox` in its constructor opts. `ToolFactory` holds the inner sandbox directly for pre-Gate-1 smoke tests (execution policy intentionally skipped; OS permissions still apply). Workflow tools call `checkExecution` in `AgentLoop` before `WorkflowExecutor` runs.
+
+**Considered:**
+
+- *Opaque `ApprovalToken` parameter on `Sandbox.execute`* — rejected: the token was accepted but never verified by the sandbox, so the interface advertised a security property it did not implement. Any caller with a `Sandbox` reference could pass an arbitrary string.
+- *Branded TypeScript type for the token* — rejected for POC: compile-time hint only; no runtime enforcement; still misleading at the interface boundary.
+- *One-shot token registry inside the sandbox* — rejected: shared mutable state between policy and sandbox; more complexity than the wrapper for this threat model (accidental bypass by trusted host code, not adversarial sandbox escape).
+
+**Why chosen:** structural enforcement — you cannot construct an `AgentLoop` without a policy-wrapped sandbox. The factory's intentional smoke-test exemption is visible at the type/wiring level (inner sandbox vs wrapped sandbox), not hidden behind magic string tokens.
 
 ---
 

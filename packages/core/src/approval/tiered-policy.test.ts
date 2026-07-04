@@ -50,7 +50,7 @@ test("checkExecution prompts (no auto-approve) when approval is null, even for l
     promptGate1: async () => { throw new Error("no"); },
     promptGate23: async () => {
       prompts++;
-      return { decision: APPROVAL_DECISION.APPROVE, token: "tok", cacheForSession: false };
+      return { decision: APPROVAL_DECISION.APPROVE, cacheForSession: false };
     },
   };
   const policy = new TieredApprovalPolicy(prompter, { workspace: "/wkspc" });
@@ -88,7 +88,7 @@ test("checkExecution prompts on elevated; cached after alwaysApprove", async () 
     promptGate1: async () => { throw new Error("no"); },
     promptGate23: async () => {
       prompts++;
-      return { decision: APPROVAL_DECISION.APPROVE, token: "tok", cacheForSession: true };
+      return { decision: APPROVAL_DECISION.APPROVE, cacheForSession: true };
     },
   };
   const policy = new TieredApprovalPolicy(prompter, { workspace: "/wkspc" });

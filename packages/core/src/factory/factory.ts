@@ -284,17 +284,17 @@ export class ToolFactory {
    */
   private async smokeTest(tool: Tool, input: unknown): Promise<ToolResult> {
     if (tool.manifest.kind === "atomic") {
-      return this.opts.sandbox.execute(tool, input, "factory-smoke");
+      return this.opts.sandbox.execute(tool, input);
     }
     const makeInvoker = (d: number) => async (name: string, args: unknown): Promise<ToolResult> => {
       const dep = await this.opts.registry.get(name);
       if (!dep) return { ok: false, error: { kind: "unknown_tool", message: `dependency '${name}' not in registry` } };
-      return this.opts.sandbox.execute(dep, args, "factory-smoke-sub", {
+      return this.opts.sandbox.execute(dep, args, {
         onInvokeTool: makeInvoker(d + 1),
         depth: d,
       });
     };
-    return this.opts.sandbox.execute(tool, input, "factory-smoke", {
+    return this.opts.sandbox.execute(tool, input, {
       onInvokeTool: makeInvoker(1),
       depth: 0,
     });

@@ -26,7 +26,7 @@ function mkTool(name: string, perms: Partial<Tool["manifest"]["permissions"]> = 
 test("sandbox returns success for ok-tool", async () => {
   const sb = new NodePermissionSandbox({ workspace: FIXTURES });
   const tool = mkTool("ok", { fsRead: [FIXTURES] });
-  const r = await sb.execute(tool, { x: 3 }, "token", { toolPath: join(FIXTURES, "ok-tool.ts") });
+  const r = await sb.execute(tool, { x: 3 }, { toolPath: join(FIXTURES, "ok-tool.ts") });
   assert.equal(r.ok, true);
   if (r.ok) assert.deepEqual(r.value, { doubled: 6 });
 });
@@ -46,7 +46,7 @@ test("sandbox normalizes missing fsWrite so execute does not throw", async () =>
       } as unknown as Tool["manifest"]["permissions"],
     },
   };
-  const r = await sb.execute(tool, { x: 3 }, "token", { toolPath: join(FIXTURES, "ok-tool.ts") });
+  const r = await sb.execute(tool, { x: 3 }, { toolPath: join(FIXTURES, "ok-tool.ts") });
   assert.equal(r.ok, true);
   if (r.ok) assert.deepEqual(r.value, { doubled: 6 });
 });
@@ -56,7 +56,7 @@ test("sandbox blocks fs-write when permission not granted", async () => {
   try {
     const sb = new NodePermissionSandbox({ workspace: dir });
     const tool = mkTool("w", { fsRead: [FIXTURES] });
-    const r = await sb.execute(tool, { path: join(dir, "out.txt"), content: "hi" }, "token", { toolPath: join(FIXTURES, "write-tool.ts") });
+    const r = await sb.execute(tool, { path: join(dir, "out.txt"), content: "hi" }, { toolPath: join(FIXTURES, "write-tool.ts") });
     assert.equal(r.ok, false);
     if (!r.ok) assert.ok(["permission_denied", "runtime_error"].includes(r.error.kind));
   } finally {
@@ -69,7 +69,7 @@ test("sandbox allows fs-write when permission granted", async () => {
   try {
     const sb = new NodePermissionSandbox({ workspace: dir });
     const tool = mkTool("w", { fsRead: [FIXTURES, dir], fsWrite: [dir] });
-    const r = await sb.execute(tool, { path: join(dir, "out.txt"), content: "hi" }, "token", { toolPath: join(FIXTURES, "write-tool.ts") });
+    const r = await sb.execute(tool, { path: join(dir, "out.txt"), content: "hi" }, { toolPath: join(FIXTURES, "write-tool.ts") });
     assert.equal(r.ok, true);
     const body = await readFile(join(dir, "out.txt"), "utf8");
     assert.equal(body, "hi");
@@ -81,7 +81,7 @@ test("sandbox allows fs-write when permission granted", async () => {
 test("sandbox enforces timeout", async () => {
   const sb = new NodePermissionSandbox({ workspace: FIXTURES });
   const tool = mkTool("slow", { fsRead: [FIXTURES] }, 300);
-  const r = await sb.execute(tool, {}, "token", { toolPath: join(FIXTURES, "slow-tool.ts") });
+  const r = await sb.execute(tool, {}, { toolPath: join(FIXTURES, "slow-tool.ts") });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.error.kind, "timeout");
 });
@@ -89,7 +89,7 @@ test("sandbox enforces timeout", async () => {
 test("sandbox enforces depth cap on invokeTool recursion", async () => {
   const sb = new NodePermissionSandbox({ workspace: FIXTURES, maxDepth: 2 });
   const tool = mkTool("ok", { fsRead: [FIXTURES] });
-  const r = await sb.execute(tool, { x: 1 }, "token", {
+  const r = await sb.execute(tool, { x: 1 }, {
     toolPath: join(FIXTURES, "ok-tool.ts"),
     depth: 3,
   });
@@ -102,7 +102,7 @@ const LLM_FIXTURE = join(FIXTURES, "llm-tool.ts");
 test("sandbox routes llm frame to onLLM handler", async () => {
   const sb = new NodePermissionSandbox({ workspace: FIXTURES });
   const tool = mkTool("llm", { fsRead: [FIXTURES] });
-  const r = await sb.execute(tool, { instructions: "go", input: 1 }, "token", {
+  const r = await sb.execute(tool, { instructions: "go", input: 1 }, {
     toolPath: LLM_FIXTURE,
     onLLM: async (req) => ({ ok: true, value: `ok:${req.instructions}` }),
   });
@@ -113,7 +113,7 @@ test("sandbox routes llm frame to onLLM handler", async () => {
 test("sandbox denies llm capability when no onLLM handler is wired", async () => {
   const sb = new NodePermissionSandbox({ workspace: FIXTURES });
   const tool = mkTool("llm", { fsRead: [FIXTURES] });
-  const r = await sb.execute(tool, { instructions: "go" }, "token", { toolPath: LLM_FIXTURE });
+  const r = await sb.execute(tool, { instructions: "go" }, { toolPath: LLM_FIXTURE });
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.error.kind, "permission_denied");
 });

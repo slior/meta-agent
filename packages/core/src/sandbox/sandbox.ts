@@ -1,11 +1,11 @@
-import type { ApprovalToken, Tool, ToolResult } from "../types.ts";
+import type { Tool, ToolResult } from "../types.ts";
 import type { LLMCapabilityRequest } from "./stdio-protocol.ts";
 
 export type { LLMCapabilityRequest as LlmCapabilityRequest } from "./stdio-protocol.ts";
 
 /**
  * A handler invoked when a sandboxed tool requests another tool to be executed (composite tool pattern).
- * 
+ *
  * @param name - The name of the tool being invoked as delegated by the running tool.
  * @param args - The arguments to pass to the delegated tool.
  * @returns A promise resolving to the result of the invoked tool.
@@ -45,18 +45,20 @@ export type ExecuteOpts = {
  */
 export interface Sandbox {
   /**
-   * Execute a sandboxed tool with the given arguments and permission token.
+   * Execute a sandboxed tool with the given arguments.
+   *
+   * Policy enforcement (approval gate) is the caller's responsibility.
+   * Use {@link PolicyEnforcedSandbox} when constructing an {@link AgentLoop} to ensure
+   * the approval policy is checked before every execution.
    *
    * @param tool - The compiled or source representation of the tool to run.
    * @param args - The arguments to pass to the tool on invocation.
-   * @param approvalToken - A token representing approved permissions for this tool execution (authorization).
    * @param opts - (Optional) Execution options including toolPath override, composite tool handler, call depth, etc.
    * @returns A Promise that resolves to the ToolResult, including output, errors, or invocation metadata.
    */
   execute(
     tool: Tool,
     args: unknown,
-    approvalToken: ApprovalToken,
     opts?: ExecuteOpts
   ): Promise<ToolResult>;
 }

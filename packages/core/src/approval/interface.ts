@@ -1,4 +1,4 @@
-import type { ApprovalRecord, ApprovalToken, Permissions, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
+import type { ApprovalRecord, Permissions, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
 import type { Workflow } from "../workflow/types.ts";
 
 /** Discriminator values for {@link Gate1Decision} and {@link ExecutionDecision}. */
@@ -69,14 +69,13 @@ export type Gate1Decision = CodeGate1Decision | WorkflowGate1Decision;
  * Represents the possible outcomes of an execution approval decision (Gate 2/3).
  *
  * - If `decision` is `"approve"`:
- *    - `token`: An {@link ApprovalToken} that authorizes the tool execution.
  *    - `cacheForSession`: If true, the approval decision may be cached for the session.
  *
  * - If `decision` is `"reject"`:
  *    - `reason`: Explanation for rejection.
  */
 export type ExecutionDecision =
-  | { decision: typeof APPROVAL_DECISION.APPROVE; token: ApprovalToken; cacheForSession: boolean }
+  | { decision: typeof APPROVAL_DECISION.APPROVE; cacheForSession: boolean }
   | { decision: typeof APPROVAL_DECISION.REJECT; reason: string };
 
 /** Risk levels for execution prompts (promptGate23). */
