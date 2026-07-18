@@ -8,7 +8,13 @@ const ALLOWED_NODE_MODULES = new Set([
 ]);
 
 const FS_MODULES = new Set(["node:fs", "node:fs/promises"]);
-const NET_MODULES = new Set(["node:http", "node:https", "undici"]);
+/**
+ * Network client modules that are forbidden outright. The only sanctioned network path for a tool is the
+ * global `fetch()`, which the runner wraps with the host allowlist shim. Direct HTTP client modules cannot
+ * be guarded in-process (their ESM named exports are read-only), so importing any of them is a hard
+ * validation failure regardless of the declared `net` mode.
+ */
+const NET_CLIENT_MODULES = new Set(["node:http", "node:https", "undici", "node:fetch"]);
 const FORBIDDEN_MODULES = new Set([
   "node:child_process", "node:worker_threads", "node:vm",
   "node:inspector", "node:perf_hooks", "node:cluster",
@@ -25,23 +31,33 @@ const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 /** Tool manifest `name`: leading lowercase letter, then lowercase letters, digits, or hyphen (max length enforced by pattern). */
 const TOOL_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 
-/** Node's built-in `fetch` (v18+); permission rules match other HTTP client modules. */
-const NODE_FETCH_MODULE = "node:fetch" as const;
-
 /** Name used in generated composite tool code; must match {@link INVOKE_TOOL_RE}. */
 const INVOKE_TOOL_CALLEE = "invokeTool";
 const INVOKE_TOOL_RE = new RegExp(String.raw`\b${INVOKE_TOOL_CALLEE}\s*\(\s*['"]([^'"]+)['"]`, "g");
 
 const EVAL_RE = /\b(?:eval|Function)\s*\(/;
 
+/**
+ * Registry snapshot used while statically validating a draft (name uniqueness and dependency existence).
+ */
 export type ValidationContext = {
+  /** Tool names already present in the registry. */
   existingNames: Set<string>;
+  /** Rejected/tombstoned names that must not be reused. */
   tombstoned: Set<string>;
 };
 
+/** Successful static validation outcome. */
 export type ValidationOk = { ok: true };
+
+/** Failed static validation outcome with one or more human-readable errors for the repair loop. */
 export type ValidationFail = { ok: false; errors: string[] };
+
+/** Result of {@link staticValidateDraft}. */
 export type ValidationResult = ValidationOk | ValidationFail;
+
+/** Guidance appended when a forbidden HTTP client module is imported. */
+const NET_CLIENT_USE_FETCH_HINT = "use the global fetch() for network access";
 
 /**
  * Extracts all static and dynamic import module names from the provided code string.
@@ -172,6 +188,11 @@ function validatePermissionsBlock(pe: unknown, errs: string[]): void {
   if (p.net !== PERMISSIONS_NET.NONE && p.net !== PERMISSIONS_NET.ALLOWLIST) {
     errs.push(`permissions.net must be "${PERMISSIONS_NET.NONE}" or "${PERMISSIONS_NET.ALLOWLIST}"`);
   }
+  if (p.net === PERMISSIONS_NET.ALLOWLIST && Array.isArray(p.netAllowlist) && p.netAllowlist.length === 0) {
+    errs.push(
+      `permissions.net is "${PERMISSIONS_NET.ALLOWLIST}" but netAllowlist is empty; declare at least one host`,
+    );
+  }
 }
 
 function validateImportsAgainstPermissions(draft: ToolDraft, errs: string[]): void {
@@ -190,8 +211,8 @@ function validateImportsAgainstPermissions(draft: ToolDraft, errs: string[]): vo
       }
       continue;
     }
-    if (NET_MODULES.has(mod) || mod === NODE_FETCH_MODULE) {
-      if (pe?.net === PERMISSIONS_NET.NONE) errs.push(`import of '${mod}' requires net permission`);
+    if (NET_CLIENT_MODULES.has(mod)) {
+      errs.push(`import of '${mod}' is not permitted; ${NET_CLIENT_USE_FETCH_HINT}`);
       continue;
     }
     if (ALLOWED_NODE_MODULES.has(mod)) continue;
@@ -253,9 +274,9 @@ function validateNoPrivilegedCapabilities(draft: ToolDraft, errs: string[]): voi
  *
  * All validation errors are accumulated and returned if any are found.
  *
- * @param draft The ToolDraft object to statically validate.
- * @param ctx ValidationContext containing information about the existing registry/tools.
- * @returns {ValidationResult} An object with ok: true if valid, or ok: false and errors: string[] if invalid.
+ * @param draft - The ToolDraft object to statically validate.
+ * @param ctx - Registry snapshot for name uniqueness and dependency checks.
+ * @returns `{ ok: true }` when valid, or `{ ok: false, errors }` for the factory repair loop.
  */
 export function staticValidateDraft(draft: ToolDraft, ctx: ValidationContext): ValidationResult {
   const errs: string[] = [];

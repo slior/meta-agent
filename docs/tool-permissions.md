@@ -72,8 +72,12 @@ Meaning:
 - `fsWrite`: absolute paths this tool may write.
 - `net`: network mode:
   - `"none"`: no network permission granted.
-  - `"allowlist"`: network enabled (`--allow-net`) and restricted by host allowlist shim.
-- `netAllowlist`: allowed hostnames when `net = "allowlist"`.
+  - `"allowlist"`: network enabled (`--allow-net`) and restricted by a host allowlist enforced over the
+    global `fetch()`. Requires a non-empty `netAllowlist`.
+- `netAllowlist`: allowed hostnames when `net = "allowlist"`. Must contain at least one host.
+
+Network access is **fetch-only**: tools reach the network through the global `fetch()`. Direct HTTP client
+modules (`node:http`, `node:https`, `undici`, `node:fetch`) are forbidden and rejected by static validation.
 - `env`: env var names to expose to the child process.
 
 ### B. Approval permissions (policy decisions before execution)
@@ -157,7 +161,7 @@ Before any run, static validator enforces:
 - permission block shape is valid
 - imports match declared permissions:
   - filesystem modules require `fsRead` or `fsWrite`
-  - network modules (`node:http`, `node:https`, `undici`, `node:fetch`) require network permission
+  - network client modules (`node:http`, `node:https`, `undici`, `node:fetch`) are forbidden; use the global `fetch()`
 - forbidden modules are blocked (`child_process`, `worker_threads`, `vm`, etc.)
 
 ### 4.4 Smoke test under declared permissions
@@ -243,12 +247,20 @@ If approved, sandbox spawns child process with flags derived from manifest:
 ### 5.4 Network allowlist behavior
 
 When `net = "allowlist"`:
-- child gets `--allow-net` (coarse enable)
-- runner installs a `fetch` host allowlist shim based on `netAllowlist`
+- `netAllowlist` must be non-empty (enforced by static validation).
+- child gets `--allow-net` (coarse enable).
+- the runner installs a `fetch` host allowlist shim based on `netAllowlist`; `fetch` is the only network
+  client available to tools (`node:http`/`node:https`/`undici`/`node:fetch` imports are rejected).
+- the shim disables `WebSocket` and `EventSource`, so allowlist-mode network access is fetch-only.
+- the shim checks `string`, `URL`, and `Request` inputs, and forces `redirect: "manual"` so a request cannot
+  auto-follow a 3xx to an unchecked host — a tool must re-`fetch` the target, which is re-validated.
+- a blocked host is returned to the agent as a `permission_denied` error.
+- if allowlist mode is active but the list is empty, the shim blocks every request (fail closed).
 
 Important nuance:
-- host allowlist is enforced at app layer (shim), not OS socket layer.
-- still meaningful and audited, but not equivalent to a kernel-level network jail.
+- the host allowlist is enforced at the app layer (the `fetch` shim), not the OS socket layer.
+- it is meaningful and audited, but not equivalent to a kernel-level network jail; a socket-level jail is
+  future hardening (see `meta-tool-design.md` §10).
 
 ### 5.5 Composite tools and permission isolation
 

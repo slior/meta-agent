@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { staticValidateDraft } from "./static-validator.ts";
-import type { ToolDraft } from "../types.ts";
+import { PERMISSIONS_NET, type ToolDraft } from "../types.ts";
 
 function draft(overrides: Partial<ToolDraft> = {}): ToolDraft {
   return {
@@ -10,13 +10,18 @@ function draft(overrides: Partial<ToolDraft> = {}): ToolDraft {
     rationale: "r",
     inputSchema: { type: "object" },
     outputShape: { type: "object" },
-    permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+    permissions: { fsRead: [], fsWrite: [], net: PERMISSIONS_NET.NONE, netAllowlist: [], env: [] },
     code: "export async function run(i){ return i; }",
     dependencies: [],
     smokeTestInput: {},
     kind: "atomic",
     ...overrides,
   };
+}
+
+/** Permissions for fetch-only allowlist validation tests (one declared host). */
+function allowlistPerms(hosts: string[] = ["api.example.com"]): ToolDraft["permissions"] {
+  return { fsRead: [], fsWrite: [], net: PERMISSIONS_NET.ALLOWLIST, netAllowlist: hosts, env: [] };
 }
 
 test("passes a minimal atomic draft", () => {
@@ -57,7 +62,7 @@ test("rejects fs import when no fs permission declared", () => {
 
 test("allows fs import when fsRead declared", () => {
   const r = staticValidateDraft(draft({
-    permissions: { fsRead: ["/tmp"], fsWrite: [], net: "none", netAllowlist: [], env: [] },
+    permissions: { fsRead: ["/tmp"], fsWrite: [], net: PERMISSIONS_NET.NONE, netAllowlist: [], env: [] },
     code: `import { readFile } from "node:fs/promises";\nexport async function run(){}`,
   }), { existingNames: new Set(), tombstoned: new Set() });
   assert.equal(r.ok, true);
@@ -68,7 +73,7 @@ test("rejects permissions.fsWrite when not an array", () => {
     permissions: {
       fsRead: ["/tmp"],
       fsWrite: {} as unknown as string[],
-      net: "none",
+      net: PERMISSIONS_NET.NONE,
       netAllowlist: [],
       env: [],
     },
@@ -83,7 +88,7 @@ test("rejects permissions.fsRead when not an array", () => {
     permissions: {
       fsRead: "/tmp" as unknown as string[],
       fsWrite: [],
-      net: "none",
+      net: PERMISSIONS_NET.NONE,
       netAllowlist: [],
       env: [],
     },
@@ -176,5 +181,49 @@ test("authored drafts may not declare capabilities", () => {
 
 test("normal authored draft still validates", () => {
   const r = staticValidateDraft(draft(), { existingNames: new Set(), tombstoned: new Set() });
+  assert.equal(r.ok, true);
+});
+
+const FORBIDDEN_NET_CLIENT_IMPORTS: Array<{ mod: string; code: string }> = [
+  { mod: "node:https", code: `import { request } from "node:https";\nexport async function run(){}` },
+  { mod: "node:http", code: `import http from "node:http";\nexport async function run(){}` },
+  { mod: "undici", code: `import { fetch as f } from "undici";\nexport async function run(){}` },
+  { mod: "node:fetch", code: `import { fetch as f } from "node:fetch";\nexport async function run(){}` },
+];
+
+for (const { mod, code } of FORBIDDEN_NET_CLIENT_IMPORTS) {
+  test(`rejects ${mod} import in allowlist mode (fetch-only)`, () => {
+    const r = staticValidateDraft(draft({
+      permissions: allowlistPerms(),
+      code,
+    }), { existingNames: new Set(), tombstoned: new Set() });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.ok(r.errors.some((e) => /use the global fetch\(\)/.test(e)));
+  });
+
+  test(`rejects ${mod} import under net none (fetch-only)`, () => {
+    const r = staticValidateDraft(draft({
+      permissions: { fsRead: [], fsWrite: [], net: PERMISSIONS_NET.NONE, netAllowlist: [], env: [] },
+      code,
+    }), { existingNames: new Set(), tombstoned: new Set() });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.ok(r.errors.some((e) => /use the global fetch\(\)/.test(e)));
+  });
+}
+
+test("rejects allowlist mode with empty netAllowlist", () => {
+  const r = staticValidateDraft(draft({
+    permissions: allowlistPerms([]),
+    code: `export async function run(){ await fetch("https://api.example.com"); }`,
+  }), { existingNames: new Set(), tombstoned: new Set() });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => /netAllowlist is empty/.test(e)));
+});
+
+test("allows fetch usage in allowlist mode with a declared host", () => {
+  const r = staticValidateDraft(draft({
+    permissions: allowlistPerms(),
+    code: `export async function run(){ return await fetch("https://api.example.com"); }`,
+  }), { existingNames: new Set(), tombstoned: new Set() });
   assert.equal(r.ok, true);
 });

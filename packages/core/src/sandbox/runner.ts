@@ -9,7 +9,11 @@
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolResult } from "../types.ts";
-import { runnerToolError } from "./runner-tool-error.ts";
+import {
+  RUNNER_TOOL_ERROR_KIND,
+  runnerToolError,
+  type RunnerToolErrorKind,
+} from "./runner-tool-error.ts";
 import { sandboxDebug, sandboxDebugEnabled, sandboxLogError } from "./sandbox-debug.ts";
 import {
   META_AGENT_NET_ALLOWLIST_ENV,
@@ -24,7 +28,41 @@ const TOOL_PATH_ARG_INDEX = 2;
 /** Single JSON object written as one stdout line (newline-terminated). */
 const JSON_LINE_SUFFIX = "\n";
 
+/** Max chars of JSON-stringified args included in child debug logs. */
 const ARGS_DEBUG_MAX = 500;
+
+/** Max hostnames listed in the net-shim install debug sample. */
+const NET_ALLOWLIST_DEBUG_SAMPLE_MAX = 8;
+
+/** Prefix for all net-shim error messages surfaced to the agent. */
+const NET_SHIM_ERROR_PREFIX = "net-shim:";
+
+/** Host placeholder when `fetch` input cannot be parsed into a URL. */
+const NET_SHIM_UNRESOLVABLE_HOST = "<unresolvable fetch input>";
+
+/** Forced `fetch` redirect mode so 3xx responses cannot auto-follow unchecked hosts. */
+const FETCH_REDIRECT_MANUAL = "manual" as const;
+
+/**
+ * Property stamped on thrown Errors so {@link runToolAndEmitOutcome} can map them to
+ * {@link RUNNER_TOOL_ERROR_KIND.PERMISSION_DENIED} instead of a generic runtime failure.
+ */
+const TOOL_ERROR_KIND_PROP = "toolErrorKind" as const;
+
+/**
+ * Global constructors neutralized in allowlist mode because they bypass the `fetch` host shim.
+ * Runtime values are the `globalThis` property names.
+ */
+const NET_SHIM_DISABLED_API = {
+  WEBSOCKET: "WebSocket",
+  EVENT_SOURCE: "EventSource",
+} as const;
+
+/** API names disabled by {@link disableUnguardedNetworkGlobals}. */
+type NetShimDisabledApi = (typeof NET_SHIM_DISABLED_API)[keyof typeof NET_SHIM_DISABLED_API];
+
+/** Thrown Error carrying a runner error-kind discriminator for stdout mapping. */
+type RunnerKindedError = Error & { [TOOL_ERROR_KIND_PROP]: RunnerToolErrorKind };
 
 function exitRunner(code: number, reason: string): never {
   sandboxDebug("child runner process.exit", `${reason} code=${code}`);
@@ -104,9 +142,11 @@ function installLlmGlobal(): void {
       writeStdoutFrame({ op: SANDBOX_STDIO_OP.llm, requestId, req } as SandboxChildStdoutFrame);
       const result = await new Promise<ToolResult>((resolve) => pendingLlm.set(requestId, resolve));
       if (!result.ok) {
-        const err = new Error(result.error.message) as Error & { toolErrorKind?: string };
-        err.toolErrorKind = result.error.kind;
-        throw err;
+        const kind =
+          result.error.kind === RUNNER_TOOL_ERROR_KIND.PERMISSION_DENIED
+            ? RUNNER_TOOL_ERROR_KIND.PERMISSION_DENIED
+            : RUNNER_TOOL_ERROR_KIND.RUNTIME_ERROR;
+        throw attachRunnerErrorKind(new Error(result.error.message), kind);
       }
       return result.value;
     };
@@ -114,41 +154,111 @@ function installLlmGlobal(): void {
 
 installLlmGlobal();
 
+/** Config derived from {@link META_AGENT_NET_ALLOWLIST_ENV}: whether allowlist mode is active and its hosts. */
+type NetShimConfig = { active: boolean; hosts: string[] };
+
 /**
- * When `META_AGENT_NET_ALLOWLIST` is non-empty, replaces `globalThis.fetch` with a host allowlist guard.
+ * Stamps {@link TOOL_ERROR_KIND_PROP} onto an Error so {@link runToolAndEmitOutcome} can map the kind.
  *
- * @param netAllowlist - Hostnames permitted for `fetch` (from env, already split).
+ * @param err - Error to annotate.
+ * @param kind - Child result error kind to emit on stdout.
+ * @returns The same error instance, typed as {@link RunnerKindedError}.
  */
-function installNetShim(netAllowlist: string[]): void {
-  if (netAllowlist.length === 0) {
-    sandboxDebug("child runner net shim", "skipped (empty allowlist)");
-    return;
-  }
-  const allow = new Set(netAllowlist.map((h) => h.toLowerCase()));
-  sandboxDebug(
-    "child runner net shim",
-    `installed hosts=${netAllowlist.length} sample=${netAllowlist.slice(0, 8).join(",")}${netAllowlist.length > 8 ? "…" : ""}`,
-  );
-  const origFetch = globalThis.fetch;
-  globalThis.fetch = async (input: unknown, init?: unknown) => {
-    const url = typeof input === "string" ? input : (input as { url: string }).url;
-    const host = new URL(url).hostname.toLowerCase();
-    if (!allow.has(host)) {
-      throw new Error(`net-shim: host '${host}' not in allowlist`);
-    }
-    return origFetch(
-      input as Parameters<typeof origFetch>[0],
-      init as Parameters<typeof origFetch>[1],
-    );
-  };
+function attachRunnerErrorKind(err: Error, kind: RunnerToolErrorKind): RunnerKindedError {
+  const kinded = err as RunnerKindedError;
+  kinded[TOOL_ERROR_KIND_PROP] = kind;
+  return kinded;
 }
 
 /**
- * Parses comma-separated hostnames from {@link META_AGENT_NET_ALLOWLIST_ENV}.
+ * Reads {@link META_AGENT_NET_ALLOWLIST_ENV}. The var is *defined* (possibly empty) whenever the parent
+ * granted `net: "allowlist"`, and *undefined* when the tool has no network permission. An empty-but-defined
+ * value means "allowlist mode active, zero hosts" — the shim then blocks every request (fail closed).
  */
-function readNetAllowlistFromEnv(): string[] {
-  const raw = process.env[META_AGENT_NET_ALLOWLIST_ENV] ?? "";
-  return raw ? raw.split(",").filter(Boolean) : [];
+function readNetShimConfigFromEnv(): NetShimConfig {
+  const raw = process.env[META_AGENT_NET_ALLOWLIST_ENV];
+  if (raw === undefined) return { active: false, hosts: [] };
+  return { active: true, hosts: raw ? raw.split(",").filter(Boolean) : [] };
+}
+
+/** Builds a blocked-host error that the runner maps to a permission-denied result. */
+function netShimBlockedError(host: string): RunnerKindedError {
+  return attachRunnerErrorKind(
+    new Error(`${NET_SHIM_ERROR_PREFIX} host '${host}' not in allowlist`),
+    RUNNER_TOOL_ERROR_KIND.PERMISSION_DENIED,
+  );
+}
+
+/** Builds a fetch-only error that the runner maps to a permission-denied result. */
+function netShimFetchOnlyError(api: NetShimDisabledApi): RunnerKindedError {
+  return attachRunnerErrorKind(
+    new Error(
+      `${NET_SHIM_ERROR_PREFIX} ${api} is disabled; only fetch() is allowed for network access under the allowlist shim`,
+    ),
+    RUNNER_TOOL_ERROR_KIND.PERMISSION_DENIED,
+  );
+}
+
+/** Disables globally available network APIs that would bypass the fetch host allowlist. */
+function disableUnguardedNetworkGlobals(): void {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  for (const api of Object.values(NET_SHIM_DISABLED_API)) {
+    if (globals[api] === undefined) continue;
+    // Preserve a named function for clearer stack traces when tools call the blocked API.
+    globals[api] = {
+      [api]: function (): never {
+        throw netShimFetchOnlyError(api);
+      },
+    }[api];
+  }
+}
+
+/**
+ * Extracts the lowercased hostname from a `fetch` first argument (`string`, `URL`, or `Request`).
+ * Throws a blocked-host error for unsupported/unparseable inputs so the shim fails closed.
+ */
+function extractFetchHost(input: unknown): string {
+  if (typeof input === "string") return new URL(input).hostname.toLowerCase();
+  if (input instanceof URL) return input.hostname.toLowerCase();
+  const asReq = input as { url?: unknown };
+  if (asReq && typeof asReq.url === "string") return new URL(asReq.url).hostname.toLowerCase();
+  throw netShimBlockedError(NET_SHIM_UNRESOLVABLE_HOST);
+}
+
+/**
+ * Installs a host-allowlist guard over `globalThis.fetch` whenever allowlist mode is active.
+ * Blocks hosts outside the allowlist, refuses unparseable inputs, and forces `redirect: "manual"` so a
+ * response cannot auto-follow a 3xx to an unchecked host. A tool must re-`fetch` a redirect target, which
+ * is re-validated. When `cfg.active` is false the real `fetch` is left in place (no net permission granted).
+ *
+ * @param cfg - Allowlist activation flag and hostnames (from env).
+ */
+function installNetShim(cfg: NetShimConfig): void {
+  if (!cfg.active) {
+    sandboxDebug("child runner net shim", "skipped (net not in allowlist mode)");
+    return;
+  }
+  const allow = new Set(cfg.hosts.map((h) => h.toLowerCase()));
+  const sample = cfg.hosts.slice(0, NET_ALLOWLIST_DEBUG_SAMPLE_MAX).join(",");
+  const sampleSuffix = cfg.hosts.length > NET_ALLOWLIST_DEBUG_SAMPLE_MAX ? "…" : "";
+  sandboxDebug(
+    "child runner net shim",
+    `installed hosts=${cfg.hosts.length} sample=${sample}${sampleSuffix}`,
+  );
+  disableUnguardedNetworkGlobals();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (input: unknown, init?: unknown) => {
+    const host = extractFetchHost(input);
+    if (!allow.has(host)) throw netShimBlockedError(host);
+    const merged = {
+      ...(init as Record<string, unknown> | undefined),
+      redirect: FETCH_REDIRECT_MANUAL,
+    };
+    return origFetch(
+      input as Parameters<typeof origFetch>[0],
+      merged as Parameters<typeof origFetch>[1],
+    );
+  };
 }
 
 /**
@@ -210,7 +320,9 @@ async function loadToolModuleOrEmitError(toolPath: string): Promise<{ run: RunFn
     const err = e as Error;
     sandboxDebug("child runner import failed", err.message);
     writeStdoutFrame(
-      childStdoutResultFrame(runnerToolError("runtime_error", `import failed: ${err.message}`)),
+      childStdoutResultFrame(
+        runnerToolError(RUNNER_TOOL_ERROR_KIND.RUNTIME_ERROR, `import failed: ${err.message}`),
+      ),
     );
     return null;
   }
@@ -229,13 +341,14 @@ async function runToolAndEmitOutcome(mod: { run: RunFn }, args: unknown): Promis
     sandboxDebug("child runner run() returned", "writing success result frame");
     writeStdoutFrame(childStdoutResultFrame({ ok: true, value }));
   } catch (e) {
-    const err = e as Error & { toolErrorKind?: string };
+    const err = e as Error & { [TOOL_ERROR_KIND_PROP]?: RunnerToolErrorKind };
     sandboxDebug("child runner run() threw", err.message);
-    const kind = err.toolErrorKind === "permission_denied" ? "permission_denied" : "runtime_error";
+    const kind =
+      err[TOOL_ERROR_KIND_PROP] === RUNNER_TOOL_ERROR_KIND.PERMISSION_DENIED
+        ? RUNNER_TOOL_ERROR_KIND.PERMISSION_DENIED
+        : RUNNER_TOOL_ERROR_KIND.RUNTIME_ERROR;
     writeStdoutFrame(
-      childStdoutResultFrame(
-        runnerToolError(kind, err.message, { stack: err.stack }),
-      ),
+      childStdoutResultFrame(runnerToolError(kind, err.message, { stack: err.stack })),
     );
   }
 }
@@ -252,19 +365,21 @@ async function main(): Promise<void> {
   }
 
   const toolPath = process.argv[TOOL_PATH_ARG_INDEX];
-  const netAllowlist = readNetAllowlistFromEnv();
+  const netShimConfig = readNetShimConfigFromEnv();
 
   sandboxDebug(
     "child runner bootstrap",
-    `pid=${process.pid} node=${process.version} toolPathArg=${toolPath ?? "(missing)"} netAllowlistEntries=${String(netAllowlist.length)}`,
+    `pid=${process.pid} node=${process.version} toolPathArg=${toolPath ?? "(missing)"} netActive=${String(netShimConfig.active)} netAllowlistEntries=${String(netShimConfig.hosts.length)}`,
   );
 
   if (!toolPath) {
-    writeStdoutFrame(childStdoutResultFrame(runnerToolError("runtime_error", "runner: missing tool path")));
+    writeStdoutFrame(
+      childStdoutResultFrame(runnerToolError(RUNNER_TOOL_ERROR_KIND.RUNTIME_ERROR, "runner: missing tool path")),
+    );
     exitRunner(0, "missing tool path after error frame");
   }
 
-  installNetShim(netAllowlist);
+  installNetShim(netShimConfig);
 
   const mod = await loadToolModuleOrEmitError(toolPath);
   if (!mod) {

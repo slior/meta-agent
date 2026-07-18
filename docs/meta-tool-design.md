@@ -350,7 +350,7 @@ The runner is a tiny bootstrap shipped with `core` that:
 
 ### 5.2 Network scoping
 
-Node's `--allow-net` is coarse (on/off). For host-level allowlisting in v1 we rely on a **thin shim** that the runner installs before importing the tool: it monkey-patches `fetch`, `undici`, and `http.request` to reject hosts not in `manifest.netAllowlist`.
+Node's `--allow-net` is coarse (on/off). For host-level allowlisting in v1, network access is **fetch-only**: static validation forbids direct HTTP client modules (`node:http`, `node:https`, `undici`, `node:fetch`), and the runner disables `WebSocket` and `EventSource`, leaving the global `fetch()` as the single network path. The runner installs a **thin shim** over `fetch` before importing the tool: it parses `string`/`URL`/`Request` inputs, rejects hosts not in `manifest.netAllowlist`, and forces `redirect: "manual"` so responses cannot auto-follow a 3xx to an unchecked host. An allowlisted tool must declare at least one host; an empty-but-active allowlist blocks every request.
 
 This is belt-and-suspenders — the declared intent is checked at the application layer even though the OS layer is only on/off. *A determined adversarial child could work around the shim.* For the POC the combination of per-tool `--allow-net` declaration (so a non-network tool has no network at all) plus HITL approval of the code is the real guard. A true host-level network jail (e.g., a proxy subprocess) is noted as future hardening (Section 10).
 
@@ -400,7 +400,7 @@ This gives the agent a uniform way to reason about failures and decide whether t
 ### 5.7 Known trade-offs
 
 - **Subprocess spawn cost is ~20–80ms** per tool call. Acceptable for a POC; visible in multi-tool chains. Noted as future optimization (warm worker pool per tool, reset state between uses).
-- **The fetch/undici monkey-patch for net allowlisting is a soft boundary.** The coarse `--allow-net` plus HITL is the hard guard; the shim is a declared-intent check at the app layer.
+- **The fetch shim for net allowlisting is an app-layer soft boundary.** Network access is fetch-only (other HTTP client modules are forbidden), so there is a single guarded chokepoint; the coarse `--allow-net` plus HITL remain the hard guards. A socket-level jail is future hardening (§10).
 
 ---
 
@@ -924,10 +924,11 @@ This section records every meaningful choice made during design and what alterna
 
 ### 11.11 Network permission model
 
-**Chosen:** `--allow-net` (coarse) + application-level host allowlist via a fetch/http shim installed by the runner before tool code loads.
+**Chosen:** `--allow-net` (coarse) + application-level, **fetch-only** host allowlist. Static validation forbids direct HTTP client modules so the global `fetch()` is the only network path, and the runner shim over `fetch` enforces `manifest.netAllowlist` (checking `string`/`URL`/`Request` inputs, forcing `redirect: "manual"`, failing closed on an empty allowlist).
 
 **Considered:**
 
+- *Patching `fetch` + `undici` + `http.request` individually* — rejected: `node:http`/`undici` ESM named exports are read-only and cannot be reliably guarded in-process, so multiple client routes stayed unguarded. Forbidding those imports and guarding only `fetch` yields one honest chokepoint.
 - *Host-level jail via a proxy subprocess* — rejected for POC: adds real complexity and another moving part. Kept as explicit future hardening.
 - *No host-level allowlisting* — rejected: loses the declared-intent check that makes manifests meaningful.
 
