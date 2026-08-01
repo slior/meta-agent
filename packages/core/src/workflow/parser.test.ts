@@ -73,3 +73,41 @@ test("parser: accepts null return", () => {
   const out = parseWorkflow(ok);
   assert.equal(out.ok, true);
 });
+
+test("parser: accepts SymRef with optional path (ADR 003)", () => {
+  const ok = {
+    ...VALID,
+    steps: [{
+      ...VALID.steps[0],
+      arguments: { input: { kind: "symref", ref: "r_0_fetch", path: "text" } },
+    }],
+  };
+  const out = parseWorkflow(ok);
+  assert.equal(out.ok, true);
+  if (out.ok) {
+    const arg = out.workflow.steps[0]!.arguments.input!;
+    assert.equal(arg.kind, "symref");
+    if (arg.kind === "symref") assert.equal(arg.path, "text");
+  }
+});
+
+test("parser: accepts return.source with optional path", () => {
+  const ok = {
+    ...VALID,
+    return: { source: { kind: "symref", ref: "r0", path: "text" } },
+  };
+  const out = parseWorkflow(ok);
+  assert.equal(out.ok, true);
+});
+
+test("parser: rejects empty SymRef.path", () => {
+  const bad = {
+    ...VALID,
+    steps: [{
+      ...VALID.steps[0],
+      arguments: { input: { kind: "symref", ref: "r_0_fetch", path: "" } },
+    }],
+  };
+  const out = parseWorkflow(bad);
+  assert.equal(out.ok, false);
+});

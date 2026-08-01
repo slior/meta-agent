@@ -2,26 +2,26 @@ import { isBuiltinApproval, type ToolRegistry } from "@meta-agent/core";
 import { renderTable, truncateCell, type TableColumn } from "./terminal-table.ts";
 
 const TOOLS_COMMAND = {
-  detailsArg: "details",
-  usage: "Usage: /tools [details]",
+  DETAILS_ARG: "details",
+  USAGE: "Usage: /tools [details]",
 } as const;
 
 const BUILTIN_LABEL = {
-  yes: "yes",
-  no: "no",
+  YES: "yes",
+  NO: "no",
 } as const;
 
 const SCHEMA_SUMMARY = {
-  any: "any",
-  object: "object",
+  ANY: "any",
+  OBJECT: "object",
 } as const;
 
 const EMPTY_REGISTRY_MESSAGE = "No tools registered.";
 
 const DETAIL_LABEL = {
-  description: "  Description:",
-  inputSchema: "  Input schema:",
-  outputSchema: "  Output schema:",
+  DESCRIPTION: "  Description:",
+  INPUT_SCHEMA: "  Input schema:",
+  OUTPUT_SCHEMA: "  Output schema:",
 } as const;
 
 const TABLE_COLUMNS = [
@@ -82,8 +82,8 @@ export function isToolsCommand(line: string): boolean {
 export function parseToolsCommand(line: string): ParseToolsCommandResult {
   const args = line.trim().replace(/^\/tools/, "").trim().split(/\s+/).filter(Boolean);
   if (args.length === 0) return { ok: true, details: false };
-  if (args.length === 1 && args[0] === TOOLS_COMMAND.detailsArg) return { ok: true, details: true };
-  return { ok: false, usage: TOOLS_COMMAND.usage };
+  if (args.length === 1 && args[0] === TOOLS_COMMAND.DETAILS_ARG) return { ok: true, details: true };
+  return { ok: false, usage: TOOLS_COMMAND.USAGE };
 }
 
 /**
@@ -100,7 +100,7 @@ export function truncate(text: string, max: number): string {
 function resolveSchemaType(schema: Record<string, unknown>): string {
   const type = schema.type;
   if (typeof type === "string") return type;
-  return schema.properties !== undefined ? SCHEMA_SUMMARY.object : SCHEMA_SUMMARY.any;
+  return schema.properties !== undefined ? SCHEMA_SUMMARY.OBJECT : SCHEMA_SUMMARY.ANY;
 }
 
 function appendRequiredSummary(parts: string[], schema: Record<string, unknown>): void {
@@ -133,7 +133,7 @@ function appendPropertiesSummary(parts: string[], schema: Record<string, unknown
  * @returns Human-readable type and property/required summary.
  */
 export function summarizeJsonSchema(schema: Record<string, unknown>): string {
-  if (Object.keys(schema).length === 0) return SCHEMA_SUMMARY.any;
+  if (Object.keys(schema).length === 0) return SCHEMA_SUMMARY.ANY;
 
   const parts: string[] = [resolveSchemaType(schema)];
 
@@ -175,15 +175,15 @@ async function loadCatalogRows(registry: ToolRegistry): Promise<ToolCatalogRow[]
   const rows: ToolCatalogRow[] = [];
 
   for (const summary of summaries) {
-    const tool = await registry.get(summary.name);
-    if (!tool) continue;
+    const manifest = await registry.getManifest(summary.name);
+    if (!manifest) continue;
     const approval = await registry.getApproval(summary.name);
     rows.push({
-      name: tool.manifest.name,
+      name: manifest.name,
       builtin: isBuiltinApproval(approval),
-      description: tool.manifest.description,
-      inputSchema: tool.manifest.inputSchema as Record<string, unknown>,
-      outputShape: tool.manifest.outputShape as Record<string, unknown>,
+      description: manifest.description,
+      inputSchema: manifest.inputSchema as Record<string, unknown>,
+      outputShape: manifest.outputShape as Record<string, unknown>,
     });
   }
 
@@ -197,7 +197,7 @@ function formatToolDetailHeader(name: string): string {
 function catalogRowToTableCells(row: ToolCatalogRow): string[] {
   return [
     row.name,
-    row.builtin ? BUILTIN_LABEL.yes : BUILTIN_LABEL.no,
+    row.builtin ? BUILTIN_LABEL.YES : BUILTIN_LABEL.NO,
     row.description,
     summarizeJsonSchema(row.inputSchema),
     summarizeJsonSchema(row.outputShape),
@@ -207,12 +207,12 @@ function catalogRowToTableCells(row: ToolCatalogRow): string[] {
 function formatToolDetails(row: ToolCatalogRow): string {
   const lines = [formatToolDetailHeader(row.name)];
   if (row.description.length > DESCRIPTION_COL_WIDTH) {
-    lines.push(`${DETAIL_LABEL.description} ${row.description}`);
+    lines.push(`${DETAIL_LABEL.DESCRIPTION} ${row.description}`);
   }
   lines.push(
-    DETAIL_LABEL.inputSchema,
+    DETAIL_LABEL.INPUT_SCHEMA,
     indentJson(row.inputSchema, JSON_INDENT_SPACES),
-    DETAIL_LABEL.outputSchema,
+    DETAIL_LABEL.OUTPUT_SCHEMA,
     indentJson(row.outputShape, JSON_INDENT_SPACES),
   );
   return lines.join("\n");

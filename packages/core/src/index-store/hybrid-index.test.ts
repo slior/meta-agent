@@ -2,20 +2,23 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HybridToolIndex } from "./hybrid-index.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
-import type { ApprovalRecord, Tool, ToolSummary } from "../types.ts";
+import type { ApprovalRecord, ToolSummary } from "../types.ts";
+import { isCodeTool, type CodeTool, type Tool, type WorkflowTool } from "../tool.ts";
+import { makeConsistentCodeTool } from "../testing/tool-fixtures.ts";
+
+const TOOL_CODE = "export async function run(){return {};}";
 
 function mkTool(name: string, description: string, rationale = ""): Tool {
-  return {
-    code: "",
-    manifest: {
+  return makeConsistentCodeTool(
+    {
       name, description, rationale,
       inputSchema: { type: "object" }, outputShape: { type: "object" },
       permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
       dependencies: [], limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
-      hash: "sha256:" + "a".repeat(64),
       createdAt: "2026-04-21T00:00:00Z", kind: "atomic",
     },
-  };
+    TOOL_CODE,
+  );
 }
 
 class StubRegistry implements ToolRegistry {
@@ -31,13 +34,20 @@ class StubRegistry implements ToolRegistry {
       hash: t.manifest.hash, kind: t.manifest.kind,
     }));
   }
-  async get(name: string) { return this.tools.find((t) => t.manifest.name === name) ?? null; }
+  async getKind(name: string) { return this.tools.find((t) => t.manifest.name === name)?.manifest.kind ?? null; }
+  async getManifest(name: string) { return this.tools.find((t) => t.manifest.name === name)?.manifest ?? null; }
+  async getCode(name: string): Promise<CodeTool | null> {
+    const t = this.tools.find((x) => x.manifest.name === name);
+    return t && isCodeTool(t) ? t : null;
+  }
+  async getWorkflow(): Promise<WorkflowTool | null> { return null; }
   async getApproval(_n: string): Promise<ApprovalRecord | null> { return null; }
-  async save() { throw new Error("stub"); }
+  async saveCode() { throw new Error("stub"); }
+  async saveWorkflow() { throw new Error("stub"); }
   async delete() { throw new Error("stub"); }
   async getDependents() { return []; }
   async has(n: string) { return this.tools.some((t) => t.manifest.name === n); }
-  async getWorkflow() { return null; }
+  integrityReport() { return []; }
 }
 
 test("catalog returns name + short description", async () => {

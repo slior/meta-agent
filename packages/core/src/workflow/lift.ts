@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { isRefSentinel } from "../agent/result-store.ts";
 import { canonicalJson } from "../hash.ts";
 import { normalizePermissions, unionPermissions } from "../permissions-normalize.ts";
-import { TOOL_KIND, type Tool, type ToolManifest } from "../types.ts";
+import { TOOL_KIND, type ToolManifest } from "../types.ts";
+import type { Tool } from "../tool.ts";
 import { IR_SCHEMA_VERSION, STEP_KIND, ARG_KIND, type Argument, type ToolCallStep, type Workflow, type WorkflowInput } from "./types.ts";
 
 /**
@@ -41,8 +42,12 @@ export type LiftRequest = {
   toolsByName: Record<string, Tool>;
 };
 
+/** Structured failure from {@link liftFromTrace} (empty slice, unknown tool, etc.). */
 export type LiftError = { code: string; message: string };
 
+/**
+ * An argument that could not be bound to a prior step output and was inlined as a literal.
+ */
 export type LiteralFallback = {
   stepLabel: string;
   argName: string;
@@ -259,6 +264,9 @@ function simpleHash(s: string): string {
  * Projects declared workflow inputs into a JSON Schema for the manifest's
  * `inputSchema`. Empty inputs project to `{}` (a closed workflow). Defaults and
  * descriptions are advertised for the LLM; defaults are applied by the executor.
+ *
+ * @param inputs - Declared workflow inputs from the lifted IR.
+ * @returns Object-form JSON Schema suitable for `ToolManifest.inputSchema`.
  */
 export function inputSchemaFromInputs(inputs: WorkflowInput[]): Record<string, unknown> {
   if (inputs.length === 0) return {};

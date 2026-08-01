@@ -1,87 +1,101 @@
-import type { ApprovalRecord, Tool, ToolSummary } from "../types.ts";
-import type { Workflow } from "../workflow/types.ts";
+import type { ApprovalRecord, ToolKind, ToolManifest, ToolSummary } from "../types.ts";
+import type { CodeTool, WorkflowTool } from "../tool.ts";
+import type { IntegrityIssue } from "./integrity.ts";
 
 /**
- * ToolRegistry defines the interface for managing tools within a registry.
- * Implementations provide persistent or in-memory CRUD operations for tools and their associated metadata,
- * including support for workflow-based tools, approval records, and dependency analysis.
- *
- * All methods operate asynchronously unless otherwise noted.
+ * Persistence and lookup API for approved tools (code and workflow).
+ * Implementations enforce integrity on load/save and expose an integrity report.
  */
 export interface ToolRegistry {
   /**
-   * Lists all tools registered in the registry, returning an array of summary objects containing basic metadata
-   * (such as name, description, kind, hash).
-   * @returns Promise resolving to an array of ToolSummary objects.
+   * Lists compact summaries of all rehydrated tools.
+   *
+   * @returns Summaries of every loadable tool in the registry.
    */
   list(): Promise<ToolSummary[]>;
-
   /**
-   * Returns a synchronous snapshot of all registered tool summaries.
-   * Required for situations (such as template/prompt rendering) where async operations are not possible.
-   * @returns Array of ToolSummary objects.
+   * Synchronous variant of {@link list} for call sites that already hold the registry warm.
+   *
+   * @returns Summaries of every loadable tool in the registry.
    */
   listSync(): ToolSummary[];
-
   /**
-   * Retrieves the complete Tool object (including its manifest and code) for a given tool name.
-   * @param name - The unique registered tool name.
-   * @returns Promise resolving to the Tool if found, or null if not found.
-   */
-  get(name: string): Promise<Tool | null>;
-
-  /**
-   * Retrieves the approval record associated with a particular tool, if one exists.
-   * @param name - The tool name.
-   * @returns Promise resolving to the ApprovalRecord if present, otherwise null.
-   */
-  getApproval(name: string): Promise<ApprovalRecord | null>;
-
-  /**
-   * Saves or updates a tool along with its approval record in the registry.
-   * Overwrites any existing entry with the same name.
-   * @param tool - The Tool object to save.
-   * @param approval - The ApprovalRecord associated with the tool.
-   * @returns Promise which resolves when the operation completes.
-   */
-  save(tool: Tool, approval: ApprovalRecord): Promise<void>;
-
-  /**
-   * Removes a tool from the registry by name.
-   * If cascade is set, dependent tools may also be deleted.
-   * @param name - The tool name.
-   * @param opts - Optional parameter: { cascade?: boolean } (default: false)
-   * @returns Promise which resolves when deletion is complete.
-   */
-  delete(name: string, opts?: { cascade?: boolean }): Promise<void>;
-
-  /**
-   * Retrieves an array of tool names which directly depend on the specified tool.
-   * Useful for dependency analysis and safe removals.
-   * @param name - The tool name to check for dependents.
-   * @returns Promise resolving to an array of dependent tool names.
-   */
-  getDependents(name: string): Promise<string[]>;
-
-  /**
-   * Checks if a tool with the given name exists in the registry.
-   * @param name - The tool name.
-   * @returns Promise resolving to true if the tool exists, false otherwise.
+   * Checks whether a tool with the given name is present and loadable.
+   *
+   * @param name - Tool name.
+   * @returns Whether a tool with that name is present and loadable.
    */
   has(name: string): Promise<boolean>;
-
   /**
-   * Returns the root directory path of the registry, if applicable.
-   * For in-memory implementations, may be a placeholder or empty string.
-   * @returns The root directory path as a string.
+   * Returns the manifest kind for a tool name.
+   *
+   * @param name - Tool name.
+   * @returns Manifest kind, or null when the tool is absent / quarantined.
    */
+  getKind(name: string): Promise<ToolKind | null>;
+  /**
+   * Returns the parsed manifest for a tool name.
+   *
+   * @param name - Tool name.
+   * @returns Parsed manifest, or null when absent / quarantined.
+   */
+  getManifest(name: string): Promise<ToolManifest | null>;
+  /**
+   * Returns a code tool (atomic or composite) by name.
+   *
+   * @param name - Tool name.
+   * @returns Code tool when present and loadable; null otherwise.
+   */
+  getCode(name: string): Promise<CodeTool | null>;
+  /**
+   * Returns a workflow tool by name.
+   *
+   * @param name - Tool name.
+   * @returns Workflow tool when present and loadable; null otherwise.
+   */
+  getWorkflow(name: string): Promise<WorkflowTool | null>;
+  /**
+   * Returns the bound approval record for a tool name.
+   *
+   * @param name - Tool name.
+   * @returns Bound approval record, or null when missing.
+   */
+  getApproval(name: string): Promise<ApprovalRecord | null>;
+  /**
+   * Persists a code tool and its approval after integrity checks.
+   *
+   * @param tool - Code tool to write.
+   * @param approval - Approval bound to `tool.manifest.hash`.
+   */
+  saveCode(tool: CodeTool, approval: ApprovalRecord): Promise<void>;
+  /**
+   * Persists a workflow tool and its approval after integrity checks.
+   *
+   * @param tool - Workflow tool to write.
+   * @param approval - Approval bound to `tool.manifest.hash`.
+   */
+  saveWorkflow(tool: WorkflowTool, approval: ApprovalRecord): Promise<void>;
+  /**
+   * Removes a tool directory from the registry.
+   *
+   * @param name - Tool name.
+   * @param opts - Optional cascade of dependents.
+   */
+  delete(name: string, opts?: { cascade?: boolean }): Promise<void>;
+  /**
+   * Returns tool names that list the given name in their dependencies.
+   *
+   * @param name - Tool name.
+   * @returns Names of tools that list `name` in their dependencies.
+   */
+  getDependents(name: string): Promise<string[]>;
+  /** Absolute path of the registry root directory. */
   rootDir(): string;
-
   /**
-   * Loads the workflow intermediate representation (IR) for a tool of kind 'workflow'.
-   * Returns null if the tool is not found or is not a workflow tool.
-   * @param name - The workflow tool name.
-   * @returns Promise resolving to the Workflow object, or null.
+   * Load/save diagnostics: quarantined / needs-review / invalid since last rehydrate
+   * (and failed saves).
+   *
+   * @returns Accumulated integrity issues.
    */
-  getWorkflow(name: string): Promise<Workflow | null>;
+  integrityReport(): IntegrityIssue[];
 }

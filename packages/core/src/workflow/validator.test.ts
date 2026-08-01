@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { validate } from "./validator.ts";
 import type { Workflow } from "./types.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
-import type { Tool, ToolSummary } from "../types.ts";
+import type { ToolSummary } from "../types.ts";
+import { isCodeTool, type CodeTool, type Tool } from "../tool.ts";
 
 function fakeRegistry(tools: Record<string, Tool>): ToolRegistry {
   const summaries: ToolSummary[] = Object.values(tools).map((t) => ({
@@ -16,20 +17,27 @@ function fakeRegistry(tools: Record<string, Tool>): ToolRegistry {
     list: async () => summaries,
     listSync: () => summaries,
     has: async (n) => n in tools,
-    get: async (n) => tools[n] ?? null,
+    getKind: async (n) => tools[n]?.manifest.kind ?? null,
+    getManifest: async (n) => tools[n]?.manifest ?? null,
+    getCode: async (n) => {
+      const t = tools[n];
+      return t && isCodeTool(t) ? t : null;
+    },
+    getWorkflow: async () => null,
     getApproval: async () => null,
-    save: async () => {},
+    saveCode: async () => {},
+    saveWorkflow: async () => {},
     delete: async () => {},
     getDependents: async () => [],
     rootDir: () => "/tmp",
-    getWorkflow: async () => null,
+    integrityReport: () => [],
   };
 }
 
 const ATOMIC = (
   name: string,
   inputSchema: Record<string, unknown> = { type: "object", properties: {}, additionalProperties: true },
-): Tool => ({
+): CodeTool => ({
   manifest: {
     name,
     description: "",
@@ -260,7 +268,7 @@ test("validator: symref to invalid input name emits both invalid_input_name and 
 });
 
 function setupWithToolCapabilities(caps: string[]): { registry: ToolRegistry; workflow: Workflow } {
-  const tool: Tool = {
+  const tool: CodeTool = {
     ...ATOMIC("telepathy-tool"),
     manifest: {
       ...ATOMIC("telepathy-tool").manifest,

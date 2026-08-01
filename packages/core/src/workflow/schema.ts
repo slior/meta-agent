@@ -5,6 +5,7 @@
  * presence) live in `validator.ts`.
  */
 
+/** JSON Schema for a workflow step argument (`literal` or `symref`). */
 export const ARGUMENT_SCHEMA = {
   oneOf: [
     {
@@ -21,6 +22,7 @@ export const ARGUMENT_SCHEMA = {
       properties: {
         kind: { const: "symref" },
         ref: { type: "string", minLength: 1 },
+        path: { type: "string", minLength: 1 },
       },
       required: ["kind", "ref"],
       additionalProperties: false,
@@ -28,6 +30,7 @@ export const ARGUMENT_SCHEMA = {
   ],
 } as const;
 
+/** JSON Schema for a `tool_call` workflow step. */
 export const TOOL_CALL_STEP_SCHEMA = {
   type: "object",
   properties: {
@@ -46,6 +49,7 @@ export const TOOL_CALL_STEP_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/** JSON Schema for a workflow `return` value (symref source or null). */
 export const WORKFLOW_RETURN_SCHEMA = {
   oneOf: [
     {
@@ -56,6 +60,7 @@ export const WORKFLOW_RETURN_SCHEMA = {
           properties: {
             kind: { const: "symref" },
             ref: { type: "string", minLength: 1 },
+            path: { type: "string", minLength: 1 },
           },
           required: ["kind", "ref"],
           additionalProperties: false,
@@ -68,6 +73,7 @@ export const WORKFLOW_RETURN_SCHEMA = {
   ],
 } as const;
 
+/** JSON Schema for one declared workflow input. */
 export const WORKFLOW_INPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -81,6 +87,7 @@ export const WORKFLOW_INPUT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/** Top-level JSON Schema for a LEAN-tier {@link Workflow} document. */
 export const WORKFLOW_SCHEMA = {
   type: "object",
   properties: {

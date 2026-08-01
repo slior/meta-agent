@@ -3,23 +3,45 @@ import assert from "node:assert/strict";
 import { liftFromTrace } from "./lift.ts";
 import { validate } from "./validator.ts";
 import { WorkflowExecutor } from "./executor.ts";
-import type { Tool } from "../types.ts";
+import { isCodeTool, type CodeTool, type Tool } from "../tool.ts";
+import type { ToolRegistry } from "../registry/tool-registry.ts";
+import { makeConsistentCodeTool } from "../testing/tool-fixtures.ts";
 
-function atomicTool(name: string): Tool {
-  return {
-    manifest: {
+const TOOL_CODE = "export async function run(){return {};}";
+
+function atomicTool(name: string): CodeTool {
+  return makeConsistentCodeTool(
+    {
       name, description: "", rationale: "", inputSchema: {}, outputShape: {},
       permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
       dependencies: [], limits: { timeoutMs: 1000, maxOldSpaceSizeMb: 64 },
-      hash: "sha256:0", createdAt: "2026-01-01T00:00:00.000Z", kind: "atomic",
+      createdAt: "2026-01-01T00:00:00.000Z", kind: "atomic",
     },
-    code: "",
-  };
+    TOOL_CODE,
+  );
 }
 
-function registryOf(tools: Tool[]) {
+function registryOf(tools: Tool[]): ToolRegistry {
   const byName = new Map(tools.map((t) => [t.manifest.name, t]));
-  return { get: async (n: string) => byName.get(n) ?? null } as never;
+  return {
+    list: async () => [],
+    listSync: () => [],
+    has: async (n: string) => byName.has(n),
+    getKind: async (n: string) => byName.get(n)?.manifest.kind ?? null,
+    getManifest: async (n: string) => byName.get(n)?.manifest ?? null,
+    getCode: async (n: string) => {
+      const t = byName.get(n);
+      return t && isCodeTool(t) ? t : null;
+    },
+    getWorkflow: async () => null,
+    getApproval: async () => null,
+    saveCode: async () => {},
+    saveWorkflow: async () => {},
+    delete: async () => {},
+    getDependents: async () => [],
+    rootDir: () => "/tmp",
+    integrityReport: () => [],
+  };
 }
 
 const noopTracer = () => ({ log() {} }) as never;

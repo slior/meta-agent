@@ -1,7 +1,8 @@
 import { APPROVAL_DECISION } from "../approval/interface.ts";
 import type { ApprovalPolicy } from "../approval/interface.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
-import { TOOL_ERROR_KIND, type Tool, type ToolResult } from "../types.ts";
+import { TOOL_ERROR_KIND, type ToolResult } from "../types.ts";
+import type { CodeTool } from "../tool.ts";
 import { toolError } from "../errors.ts";
 import type { ExecuteOpts, Sandbox } from "./sandbox.ts";
 
@@ -48,7 +49,7 @@ export class PolicyEnforcedSandbox implements Sandbox {
    * @param opts - Optional sandbox execution options forwarded to the inner sandbox.
    * @returns Tool result from the inner sandbox, or a `rejected_by_user` error if policy denies.
    */
-  async execute(tool: Tool, args: unknown, opts?: ExecuteOpts): Promise<ToolResult> {
+  async execute(tool: CodeTool, args: unknown, opts?: ExecuteOpts): Promise<ToolResult> {
     const approvalRecord = await this.registry.getApproval(tool.manifest.name);
     const decision = await this.approval.checkExecution(tool, args, approvalRecord);
     if (decision.decision === APPROVAL_DECISION.REJECT) {

@@ -21,10 +21,12 @@ import { toolError } from "../errors.ts";
 import type { ToolResult } from "../types.ts";
 import { ARG_KIND } from "./types.ts";
 import { parameterize } from "./parameterize.ts";
-import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
+import { makeConsistentApproval, makeConsistentCodeTool, makeConsistentWorkflowTool } from "../testing/tool-fixtures.ts";
+import type { CodeTool } from "../tool.ts";
+import { TOOL_KIND } from "../types.ts";
 
 const DOUBLE_CODE = `export async function run(input) { return input.n * 2; }`;
-const DOUBLE_TOOL = makeConsistentTool(
+const DOUBLE_TOOL = makeConsistentCodeTool(
   {
     name: "double",
     description: "Doubles a number",
@@ -41,7 +43,7 @@ const DOUBLE_TOOL = makeConsistentTool(
 );
 
 const ADD_CODE = `export async function run(input) { return input.a + input.b; }`;
-const ADD_TOOL = makeConsistentTool(
+const ADD_TOOL = makeConsistentCodeTool(
   {
     name: "add",
     description: "Adds two numbers",
@@ -58,7 +60,7 @@ const ADD_TOOL = makeConsistentTool(
 );
 
 const SQUARE_CODE = `export async function run(input) { return input.n * input.n; }`;
-const SQUARE_TOOL = makeConsistentTool(
+const SQUARE_TOOL = makeConsistentCodeTool(
   {
     name: "square",
     description: "Squares a number",
@@ -74,8 +76,8 @@ const SQUARE_TOOL = makeConsistentTool(
   SQUARE_CODE,
 );
 
-function saveWithApproval(registry: Awaited<ReturnType<typeof FsToolRegistry.open>>, tool: ReturnType<typeof makeConsistentTool>) {
-  return registry.save(tool, makeConsistentApproval(tool, { alwaysApprove: true }));
+function saveWithApproval(registry: Awaited<ReturnType<typeof FsToolRegistry.open>>, tool: CodeTool) {
+  return registry.saveCode(tool, makeConsistentApproval(tool, { alwaysApprove: true }));
 }
 
 async function setupTestEnv() {
@@ -125,7 +127,7 @@ test("E2E: lift trace to workflow and execute with parity", async () => {
     console.log(`Final result: ${expectedResult}`);
 
     // Build toolsByName for lift
-    const toolsByName: Record<string, ReturnType<typeof makeConsistentTool>> = {
+    const toolsByName: Record<string, CodeTool> = {
       double: DOUBLE_TOOL,
       add: ADD_TOOL,
       square: SQUARE_TOOL,
@@ -167,7 +169,7 @@ test("E2E: lift trace to workflow and execute with parity", async () => {
     // Execute the lifted workflow
     const executor = new WorkflowExecutor({ tracer });
     const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
-      const tool = await registry.get(name);
+      const tool = await registry.getCode(name);
       if (!tool) return toolError("unknown_tool", name);
       return sandbox.execute(tool, args);
     };
@@ -212,17 +214,16 @@ test("E2E: lift trace to workflow and execute with parity", async () => {
     assert.equal(step1B.kind, ARG_KIND.literal);
 
     // Save the workflow tool to registry (demonstrating persistence)
-    const workflowBody = JSON.stringify(workflow, null, 2);
     const { hash: _drop, ...manifestSansHash } = manifest;
-    const workflowTool = makeConsistentTool(manifestSansHash, workflowBody);
-    await registry.save(workflowTool, makeConsistentApproval(workflowTool, { alwaysApprove: true }));
+    const workflowTool = makeConsistentWorkflowTool({ ...manifestSansHash, kind: TOOL_KIND.WORKFLOW }, workflow);
+    await registry.saveWorkflow(workflowTool, makeConsistentApproval(workflowTool, { alwaysApprove: true }));
 
     // Verify registry can load it back
     const loadedWf = await registry.getWorkflow("double-add-square");
     assert.ok(loadedWf);
     if (loadedWf) {
-      assert.equal(loadedWf.name, "double-add-square");
-      assert.equal(loadedWf.steps.length, 3);
+      assert.equal(loadedWf.workflow.name, "double-add-square");
+      assert.equal(loadedWf.workflow.steps.length, 3);
       console.log("\n✅ Workflow saved and rehydrated successfully");
     }
 
@@ -277,7 +278,7 @@ test("E2E: lift with dataflow dependencies", async () => {
     // Execute
     const executor = new WorkflowExecutor({ tracer });
     const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
-      const tool = await registry.get(name);
+      const tool = await registry.getCode(name);
       if (!tool) return toolError("unknown_tool", name);
       return sandbox.execute(tool, args);
     };
@@ -318,7 +319,7 @@ test("E2E: parameterized workflow runs with caller inputs and defaults", async (
 
     const executor = new WorkflowExecutor({ tracer });
     const dispatch = async (name: string, args: unknown): Promise<ToolResult> => {
-      const tool = await registry.get(name);
+      const tool = await registry.getCode(name);
       if (!tool) return toolError("unknown_tool", name);
       return sandbox.execute(tool, args);
     };

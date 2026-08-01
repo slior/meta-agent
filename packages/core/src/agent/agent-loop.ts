@@ -13,7 +13,8 @@ import type { LlmCapabilityRequest } from "../sandbox/sandbox.ts";
 import { PolicyEnforcedSandbox } from "../sandbox/policy-enforced-sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 import type { ToolIndex } from "../index-store/interface.ts";
-import { TOOL_CAPABILITY, TOOL_ERROR_KIND, TOOL_KIND, type Tool, type ToolResult } from "../types.ts";
+import { TOOL_CAPABILITY, TOOL_ERROR_KIND, TOOL_KIND, type ToolResult } from "../types.ts";
+import type { Tool } from "../tool.ts";
 import {
   TRACE_KIND_EXECUTION_DENIED,
   TRACE_KIND_LLM_SYNTHESIS,
@@ -352,14 +353,14 @@ export class AgentLoop {
   private async registeredToolsForTurn(task: Task): Promise<ToolDef[]> {
     const defs: ToolDef[] = [...META_TOOL_DEFS];
     for (const name of task.invokedThisSession) {
-      const t = await this.opts.registry.get(name);
-      if (!t) continue;
+      const manifest = await this.opts.registry.getManifest(name);
+      if (!manifest) continue;
       defs.push({
         type: CHAT_TOOL_TYPE.function,
         function: {
-          name: t.manifest.name,
-          description: t.manifest.description,
-          parameters: t.manifest.inputSchema as Record<string, unknown>,
+          name: manifest.name,
+          description: manifest.description,
+          parameters: manifest.inputSchema as Record<string, unknown>,
         },
       });
     }
@@ -465,8 +466,8 @@ export class AgentLoop {
   /**
    * Handles invocation of a non-meta-tool (atomic, composite, or workflow).
    *
-   * Resolves `$ref` sentinels at depth 0, validates the input schema, then
-   * delegates to {@link runWithApproval} with a tool-kind-specific executor function.
+   * Dispatches on the registered kind and then fetches the body exactly once through the
+   * kind-explicit registry getter, so approval and execution always see the same snapshot.
    * Workflow tools run in-process via {@link WorkflowExecutor}; atomic and composite
    * tools run in a sandboxed subprocess via {@link Sandbox}.
    *
@@ -477,47 +478,87 @@ export class AgentLoop {
    * @returns ToolResult for this invocation.
    */
   private async dispatchTool(name: string, args: unknown, task: Task, depth: number): Promise<ToolResult> {
-    const tool = await this.opts.registry.get(name);
-    if (!tool) return toolError("unknown_tool", `no tool named '${name}'`);
+    const kind = await this.opts.registry.getKind(name);
+    if (kind === null) return toolError("unknown_tool", `no tool named '${name}'`);
+    return kind === TOOL_KIND.WORKFLOW
+      ? this.dispatchWorkflowTool(name, args, task, depth)
+      : this.dispatchCodeTool(name, args, task, depth);
+  }
 
-    // At the agent boundary (depth 0), arguments may carry { $ref } sentinels pointing at prior
-    // results the agent never saw in full. Resolve them to concrete values before validation/execution;
-    // keep the unresolved form (`recordArgs`) for lift.
-    const recordArgs = args;
-    let effectiveArgs = args;
-    if (depth === 0) {
-      const resolved = resolveRefs(args, this.resultStore);
-      if (!resolved.ok) return toolError("schema_violation", resolved.error);
-      effectiveArgs = resolved.value;
-    }
+  /**
+   * Runs a workflow tool from a single `getWorkflow` snapshot: the same {@link WorkflowTool}
+   * drives input validation, the Gate 2/3 approval check, and `executor.run`. Re-fetching
+   * between approval and execution could approve one IR and run another.
+   */
+  private async dispatchWorkflowTool(name: string, args: unknown, task: Task, depth: number): Promise<ToolResult> {
+    const tool = await this.opts.registry.getWorkflow(name);
+    if (!tool) return toolError("unknown_tool", `no workflow tool named '${name}'`);
 
-    const schema = tool.manifest.inputSchema as Record<string, unknown>;
-    const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
-    if (!this.ajv.validate(schema, input)) {
-      return toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`);
-    }
+    const prepared = this.prepareInput(tool.manifest.inputSchema as Record<string, unknown>, args, depth);
+    if (!prepared.ok) return prepared.failure;
 
-    if (tool.manifest.kind === TOOL_KIND.WORKFLOW) {
-      const wf = await this.opts.registry.getWorkflow(name);
-      if (!wf) return toolError("unknown_tool", `workflow '${name}' not found`);
-      return this.runWithApproval(tool, input, recordArgs, task, depth,
-        () => this.executor.run(
-          wf,
-          input as Record<string, unknown>,
-          (toolName, toolArgs, d) => this.dispatchTool(toolName, toolArgs, task, d),
-          depth,
-        ),
-      );
-    }
+    return this.runWithApproval(tool, prepared.input, args, task, depth,
+      () => this.executor.run(
+        tool.workflow,
+        prepared.input as Record<string, unknown>,
+        (toolName, toolArgs, d) => this.dispatchTool(toolName, toolArgs, task, d),
+        depth,
+      ),
+    );
+  }
+
+  /**
+   * Runs an atomic or composite tool from a single `getCode` snapshot. Gate 2/3 is enforced
+   * inside {@link PolicyEnforcedSandbox}, which also re-verifies Link A before spawning.
+   */
+  private async dispatchCodeTool(name: string, args: unknown, task: Task, depth: number): Promise<ToolResult> {
+    const tool = await this.opts.registry.getCode(name);
+    if (!tool) return toolError("unknown_tool", `no code tool named '${name}'`);
+
+    const prepared = this.prepareInput(tool.manifest.inputSchema as Record<string, unknown>, args, depth);
+    if (!prepared.ok) return prepared.failure;
 
     const wantsLlm = tool.manifest.capabilities?.includes(TOOL_CAPABILITY.LLM) ?? false;
-    return this.runWithTracing(tool, input, recordArgs, task, depth,
-      () => this.opts.sandbox.execute(tool, input, {
+    return this.runWithTracing(tool, prepared.input, args, task, depth,
+      () => this.opts.sandbox.execute(tool, prepared.input, {
         depth,
         onInvokeTool: (subName, subArgs) => this.dispatchTool(subName, subArgs, task, depth + 1),
         ...(wantsLlm ? { onLLM: (req) => this.runLlmCapability(req) } : {}),
       }),
     );
+  }
+
+  /**
+   * Resolves depth-0 `$ref` sentinels, coerces stringified JSON, and validates against the
+   * tool's `inputSchema`.
+   *
+   * At the agent boundary (depth 0) arguments may carry `{ $ref }` sentinels pointing at prior
+   * results the agent never saw in full; callers keep the unresolved form for lift.
+   *
+   * @param schema The callee's declared input schema.
+   * @param args Raw arguments as supplied by the model or a parent step.
+   * @param depth Recursion depth; `$ref` resolution only applies at depth 0.
+   */
+  private prepareInput(
+    schema: Record<string, unknown>,
+    args: unknown,
+    depth: number,
+  ): { ok: true; input: unknown } | { ok: false; failure: ToolResult } {
+    let effectiveArgs = args;
+    if (depth === 0) {
+      const resolved = resolveRefs(args, this.resultStore);
+      if (!resolved.ok) return { ok: false, failure: toolError("schema_violation", resolved.error) };
+      effectiveArgs = resolved.value;
+    }
+
+    const input = coerceStringifiedJsonInput(effectiveArgs, rootJsonSchemaKind(schema));
+    if (!this.ajv.validate(schema, input)) {
+      return {
+        ok: false,
+        failure: toolError("schema_violation", `input does not match schema: ${this.ajv.errorsText()}`),
+      };
+    }
+    return { ok: true, input };
   }
 
   /**

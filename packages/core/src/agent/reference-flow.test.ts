@@ -14,10 +14,10 @@ import { Tracer } from "../tracer.ts";
 import { ToolFactory } from "../factory/factory.ts";
 import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/LLMProvider.ts";
 import { META_FN } from "./meta-tools.ts";
-import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
+import { makeConsistentApproval, makeConsistentCodeTool } from "../testing/tool-fixtures.ts";
 
 function toolWith(name: string, code: string) {
-  const tool = makeConsistentTool(
+  const tool = makeConsistentCodeTool(
     {
       name,
       description: `desc ${name}`,
@@ -50,8 +50,8 @@ test("agent passes a $ref to a later tool; recorded args keep the sentinel, tool
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const fetch = toolWith("fetch", `export async function run(){ return { text: "FULL BODY TEXT", title: "T" }; }`);
     const summarize = toolWith("summarize", `export async function run(i){ return i; }`);
-    await registry.save(fetch.tool, fetch.approval);
-    await registry.save(summarize.tool, summarize.approval);
+    await registry.saveCode(fetch.tool, fetch.approval);
+    await registry.saveCode(summarize.tool, summarize.approval);
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };

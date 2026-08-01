@@ -9,7 +9,11 @@ import {
   truncate,
 } from "./tools-table.ts";
 import type { ToolRegistry } from "@meta-agent/core";
+import { isCodeTool } from "@meta-agent/core";
 import type { ApprovalRecord, Tool, ToolSummary } from "@meta-agent/core";
+import { makeConsistentCodeTool } from "./testing/code-tool-fixture.ts";
+
+const TOOL_CODE = "export async function run(){return {};}";
 
 function mkTool(
   name: string,
@@ -17,9 +21,8 @@ function mkTool(
   inputSchema: Record<string, unknown> = { type: "object" },
   outputShape: Record<string, unknown> = { type: "object" },
 ): Tool {
-  return {
-    code: "",
-    manifest: {
+  return makeConsistentCodeTool(
+    {
       name,
       description,
       rationale: "",
@@ -28,11 +31,11 @@ function mkTool(
       permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] },
       dependencies: [],
       limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
-      hash: "sha256:" + "a".repeat(64),
       createdAt: "2026-04-21T00:00:00Z",
       kind: "atomic",
     },
-  };
+    TOOL_CODE,
+  );
 }
 
 class StubRegistry implements ToolRegistry {
@@ -61,15 +64,28 @@ class StubRegistry implements ToolRegistry {
     }));
   }
 
-  async get(name: string) {
-    return this.tools.find((t) => t.manifest.name === name) ?? null;
+  async getKind(name: string) {
+    return this.tools.find((t) => t.manifest.name === name)?.manifest.kind ?? null;
+  }
+
+  async getManifest(name: string) {
+    return this.tools.find((t) => t.manifest.name === name)?.manifest ?? null;
+  }
+
+  async getCode(name: string) {
+    const t = this.tools.find((x) => x.manifest.name === name);
+    return t && isCodeTool(t) ? t : null;
   }
 
   async getApproval(name: string): Promise<ApprovalRecord | null> {
     return this.approvals.get(name) ?? null;
   }
 
-  async save() {
+  async saveCode() {
+    throw new Error("stub");
+  }
+
+  async saveWorkflow() {
     throw new Error("stub");
   }
 
@@ -87,6 +103,10 @@ class StubRegistry implements ToolRegistry {
 
   async getWorkflow() {
     return null;
+  }
+
+  integrityReport() {
+    return [];
   }
 }
 

@@ -64,7 +64,7 @@ flowchart TB
 
 ### `@meta-agent/core`
 
-#### types ([`src/types.ts`](../packages/core/src/types.ts), [`src/schemas.ts`](../packages/core/src/schemas.ts))
+#### types and tool model ([`src/types.ts`](../packages/core/src/types.ts), [`src/tool.ts`](../packages/core/src/tool.ts), [`src/schemas.ts`](../packages/core/src/schemas.ts))
 
 The shared domain model. All other modules depend on these types.
 
@@ -77,7 +77,10 @@ The shared domain model. All other modules depend on these types.
 | Type | Description |
 |------|-------------|
 | `ToolManifest` | The durable identity record of a saved tool: its name, input/output schemas, permission requirements, kind, resource limits, and the hash that locks it to an approval record. |
-| `Tool` | A saved tool: the manifest paired with its implementation code. This is what the registry stores and loads. |
+| `CodeKind` | The atomic and composite subset of `ToolKind`. Drafts are code-only, so workflow tools are never represented as code drafts. |
+| `CodeTool` | A saved atomic or composite tool: a code-kind manifest paired with TypeScript `code`. |
+| `WorkflowTool` | A saved workflow tool: a workflow manifest paired with typed `workflow` IR. |
+| `Tool` | The `CodeTool \| WorkflowTool` discriminated union. A workflow is never stored as JSON in `code` or as an empty-code placeholder. |
 | `ToolDraft` | The LLM's proposed tool before it has been hashed, tested, or approved. Includes a `smokeTestInput` the factory uses to immediately run a live sandbox test. |
 | `Permissions` | The resource footprint a tool declares it needs: filesystem paths it can read or write, whether it can use the network, and which env vars it can access. Drives both risk classification and the subprocess permission flags. |
 | `ToolResult` | The universal return value for every tool invocation. Success carries an arbitrary value; failure carries a typed error. All execution paths yield this type. |
@@ -85,7 +88,7 @@ The shared domain model. All other modules depend on these types.
 | `ToolErrorKind` | The canonical set of failure modes. Lets the agent loop pattern-match on errors to decide whether to inject recovery hints or surface the error to the model. |
 | `CatalogEntry` | The minimal slice of a tool shown in the system-prompt catalog. The model reads these to decide which tool to invoke or whether to search further with `find_tool`. |
 | `FindResult` | A ranked search hit from `find_tool`, containing enough detail for the model to decide whether to invoke a tool without fetching its full manifest. |
-| `ApprovalRecord` | The persisted proof that a user approved a specific version of a tool. Bound to a code hash so any change to the tool invalidates it and triggers re-approval. |
+| `ApprovalRecord` | The persisted proof that a user approved a specific version of a tool. Bound to a body hash—code source for code tools or serialized workflow IR for workflows—so any body or manifest change invalidates it and triggers re-approval. |
 
 ---
 
@@ -112,21 +115,27 @@ The shared domain model. All other modules depend on these types.
 
 **Responsibilities:**
 - Persist and load tools from disk.
-- Enforce atomic write of `manifest.json`, `tool.ts` (or `workflow.json`), and `approval.json`.
-- Support list, get, save, delete operations.
+- Enforce integrity-aware writes of `manifest.json`, `tool.ts` (or `workflow.json`), and `approval.json`.
+- Provide kind-explicit body access and metadata-only reads.
 
 **Key exports:**
 
 | Export | File | Description |
 |--------|------|-------------|
-| `ToolRegistry` | [`tool-registry.ts`](../packages/core/src/registry/tool-registry.ts) | The persistence contract. All tool read and write operations go through this interface; the agent loop and factory depend on it without knowing how tools are stored. |
-| `FsToolRegistry` | [`fs-registry.ts`](../packages/core/src/registry/fs-registry.ts) | The filesystem-backed registry. Stores each tool in its own subdirectory and writes files atomically so a partial save cannot corrupt an existing tool. |
+| `ToolRegistry` | [`tool-registry.ts`](../packages/core/src/registry/tool-registry.ts) | The persistence contract. `getCode` / `getWorkflow` and `saveCode` / `saveWorkflow` keep body operations kind-explicit; `getManifest` and `getKind` avoid body reads when callers need only metadata. |
+| `FsToolRegistry` | [`fs-registry.ts`](../packages/core/src/registry/fs-registry.ts) | The filesystem-backed registry. Stores each tool in its own subdirectory, verifies durable state before caching it, and retains one typed union entry per name. |
 
-- `registry/integrity.ts` — pure content/approval hash verification used at the registry's load/save boundary; depends only on `hash.ts` and `types.ts` (no I/O, no TTY).
+- `hash.ts` — owns public `hashCodeTool` / `hashWorkflowTool`, new-save `serializeWorkflowBody`, and package-internal raw-body `hashToolBody`.
+- `registry/integrity.ts` — pure content/approval hash verification used at the registry's load/save boundary; Link A uses exact body bytes on load. Link-A failures are `quarantined`; hash-authentic workflows that fail structural parsing are `invalid`.
 
 **Disk layout per tool** (`tools/<name>/`):
 - Atomic/composite: `manifest.json` + `tool.ts` + `approval.json`
 - Workflow: `manifest.json` + `workflow.json` + `approval.json`
+
+Load and save intentionally have different body contracts. Rehydration hashes
+the raw file contents before parsing, so any previously hashed formatting still
+verifies. New workflow saves serialize with `serializeWorkflowBody`, structurally
+validate before write, and hash exactly those bytes.
 
 **External dependencies:** Node `fs/promises`.
 
@@ -205,8 +214,8 @@ The shared domain model. All other modules depend on these types.
 
 | Export | File | Description |
 |--------|------|-------------|
-| `Sandbox` | [`sandbox.ts`](../packages/core/src/sandbox/sandbox.ts) | The execution contract. Receives a tool and arguments, runs the tool in isolation, and returns a `ToolResult`. Abstracts away process spawning so the agent loop does not own subprocess lifecycle. |
-| `NodePermissionSandbox` | [`node-permission-sandbox.ts`](../packages/core/src/sandbox/node-permission-sandbox.ts) | Spawns each tool in a fresh Node child process with `--permission` flags derived from the tool manifest. Manages the subprocess lifecycle, enforces timeouts, and caps output size. |
+| `Sandbox` | [`sandbox.ts`](../packages/core/src/sandbox/sandbox.ts) | The execution contract for `CodeTool`s. It runs code tools in isolation and returns a `ToolResult`; workflows execute in-process through `WorkflowExecutor`. |
+| `NodePermissionSandbox` | [`node-permission-sandbox.ts`](../packages/core/src/sandbox/node-permission-sandbox.ts) | Re-verifies Link A over a `CodeTool` before spawning, returning `permission_denied` on mismatch; otherwise it spawns a fresh Node child with manifest-derived permission flags, timeouts, and output caps. |
 | `runner.ts` | [`runner.ts`](../packages/core/src/sandbox/runner.ts) | The child process entry. Imports the tool module, routes `invokeTool` and `llm` capability requests from the tool back to the host via stdio RPC, and emits the final result frame. |
 | `SANDBOX_STDIO_OP` | [`stdio-protocol.ts`](../packages/core/src/sandbox/stdio-protocol.ts) | The opcode enum for the parent-child JSON RPC protocol. Each value identifies the purpose of a frame in the stdio stream (`args`, `invokeTool`, `invokeToolResult`, `llm`, `llmResult`, `result`). |
 
@@ -381,6 +390,7 @@ sequenceDiagram
     participant AP as ApprovalPolicy
     participant SB as NodePermissionSandbox
     participant Child as runner.ts (child)
+    participant WE as WorkflowExecutor
 
     User->>REPL: input message
     REPL->>AL: run(userMessage)
@@ -392,13 +402,22 @@ sequenceDiagram
             AL->>MT: find_tool(query)
             MT-->>AL: FindResult[]
         else invoke_tool
-            AL->>TR: get(name)
-            AL->>AP: checkExecution(manifest, args)
-            AP-->>AL: approve / reject
-            AL->>SB: execute(tool, args)
-            SB->>Child: spawn + stdin args
-            Child-->>SB: stdout result frame
-            SB-->>AL: ToolResult
+            alt code tool
+                AL->>TR: getCode(name)
+                AL->>AP: checkExecution(code tool, args)
+                AP-->>AL: approve / reject
+                AL->>SB: execute(code tool, args)
+                SB->>Child: spawn + stdin args
+                Child-->>SB: stdout result frame
+                SB-->>AL: ToolResult
+            else workflow tool
+                AL->>TR: getWorkflow(name) (one snapshot)
+                AL->>AL: validate workflow input
+                AL->>AP: checkExecution(workflow snapshot, args)
+                AP-->>AL: approve / reject
+                AL->>WE: run(snapshot.workflow, args)
+                WE-->>AL: ToolResult
+            end
         else propose_new_tool
             AL->>ToolFactory: createAtomic(req)
         else stop
@@ -424,7 +443,7 @@ flowchart TD
     D -- valid --> F[Sandbox smoke test]
     F --> G{ApprovalPolicy.reviewDraft\nGate 1}
     G -- reject --> H[FactoryOutcome ok:false]
-    G -- approve --> I[hashTool + FsToolRegistry.save]
+    G -- approve --> I[hashCodeTool + FsToolRegistry.saveCode]
     I --> J[Tracer: tool-created]
     J --> K[FactoryOutcome ok:true]
 ```
@@ -445,7 +464,7 @@ flowchart TD
     G --> H[validateWorkflow against registry]
     H --> I[ToolFactory.createWorkflow]
     I --> J[Gate 1 approval]
-    J --> K[FsToolRegistry.save workflow.json]
+    J --> K[hashWorkflowTool + FsToolRegistry.saveWorkflow]
     K --> L[New workflow tool available]
 ```
 
@@ -523,7 +542,7 @@ flowchart TD
 | Risk classification | `riskTier()` escalates tools with net access, out-of-workspace paths, or secret-named env vars |
 | Approval gates | Gate 1 always prompts for new tools; `yolo` only skips Gate 2/3 execution prompts |
 | Process isolation | `--allow-fs-read`, `--allow-fs-write`, `--allow-net` map manifest fields to Node permission flags |
-| Hash verification | `approval.json` stores the tool hash; hash mismatch triggers re-approval |
+| Hash verification | Link A hashes body bytes against the manifest and Link B binds approval; raw-body mismatch quarantines an entry, structural workflow parse failure is `invalid`, and the sandbox rechecks Link A before code execution |
 
 ---
 

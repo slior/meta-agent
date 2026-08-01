@@ -4,10 +4,11 @@ import type { Sandbox, ExecuteOpts } from "./sandbox.ts";
 import type { ApprovalPolicy } from "../approval/interface.ts";
 import { APPROVAL_DECISION } from "../approval/interface.ts";
 import { PolicyEnforcedSandbox } from "./policy-enforced-sandbox.ts";
-import { TOOL_ERROR_KIND, type ApprovalRecord, type Tool, type ToolResult } from "../types.ts";
+import { TOOL_ERROR_KIND, type ApprovalRecord, type ToolResult } from "../types.ts";
+import type { CodeTool } from "../tool.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 
-function makeTool(name = "test-tool"): Tool {
+function makeTool(name = "test-tool"): CodeTool {
   return {
     manifest: {
       name,
@@ -65,13 +66,17 @@ function makeRegistry(approvalRecord: ApprovalRecord | null): ToolRegistry {
     async getApproval(_name: string) { return approvalRecord; },
     async list() { return []; },
     listSync() { return []; },
-    async get(_name: string) { return null; },
-    async save() {},
+    async getKind(_name: string) { return null; },
+    async getManifest(_name: string) { return null; },
+    async getCode(_name: string) { return null; },
+    async getWorkflow(_name: string) { return null; },
+    async saveCode() {},
+    async saveWorkflow() {},
     async delete() {},
     async getDependents(_name: string) { return []; },
     async has(_name: string) { return false; },
     rootDir() { return ""; },
-    async getWorkflow(_name: string) { return null; },
+    integrityReport() { return []; },
   };
 }
 

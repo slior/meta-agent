@@ -1,4 +1,5 @@
-import type { ApprovalRecord, Permissions, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
+import type { ApprovalRecord, Permissions, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
+import type { Tool } from "../tool.ts";
 import type { Workflow } from "../workflow/types.ts";
 
 /** Discriminator values for {@link Gate1Decision} and {@link ExecutionDecision}. */
@@ -13,6 +14,7 @@ export const GATE1_KIND = {
   WORKFLOW: "workflow",
 } as const;
 
+/** Discriminator for Gate 1 review payloads and decisions (`code` vs `workflow`). */
 export type Gate1Kind = (typeof GATE1_KIND)[keyof typeof GATE1_KIND];
 
 /**
@@ -85,6 +87,7 @@ export const RISK_TIER = {
   ELEVATED: "elevated",
 } as const;
 
+/** Risk level shown in Gate 2/3 execution prompts. */
 export type RiskTier = (typeof RISK_TIER)[keyof typeof RISK_TIER];
 
 /**
@@ -101,6 +104,11 @@ export interface ApprovalPrompter {
 
   /**
    * Prompt the user (or approval agent) for approval before executing a tool (Gate 2/3).
+   *
+   * @param tool - Tool about to run.
+   * @param args - Invocation arguments shown to the reviewer.
+   * @param tier - Assessed risk tier for the prompt.
+   * @returns Approve (optionally cache for session) or reject with reason.
    */
   promptGate23(tool: Tool, args: unknown, tier: RiskTier): Promise<ExecutionDecision>;
 }
@@ -119,6 +127,11 @@ export interface ApprovalPolicy {
 
   /**
    * Check if a tool execution should be permitted at runtime (Gate 2/3).
+   *
+   * @param tool - Tool about to run.
+   * @param args - Invocation arguments.
+   * @param approval - Bound approval record, or null when missing/stale.
+   * @returns Approve (optionally cache for session) or reject with reason.
    */
   checkExecution(tool: Tool, args: unknown, approval: ApprovalRecord | null): Promise<ExecutionDecision>;
 

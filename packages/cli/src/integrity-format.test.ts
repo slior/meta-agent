@@ -9,11 +9,13 @@ test("formatIntegrityIssues returns null when there are no issues", () => {
 
 test("formatIntegrityIssues lists each issue with a readable label", () => {
   const out = formatIntegrityIssues([
-    { name: "csv-parse", path: "/t/csv-parse/tool.ts", status: INTEGRITY_STATUS.quarantined, reason: "edited" },
-    { name: "web-fetch", path: "/t/web-fetch/workflow.json", status: INTEGRITY_STATUS.needsReview, reason: "stale approval" },
+    { name: "csv-parse", path: "/t/csv-parse/tool.ts", status: INTEGRITY_STATUS.QUARANTINED, reason: "edited" },
+    { name: "web-fetch", path: "/t/web-fetch/workflow.json", status: INTEGRITY_STATUS.NEEDS_REVIEW, reason: "stale approval" },
+    { name: "broken-flow", path: "/t/broken-flow/workflow.json", status: INTEGRITY_STATUS.INVALID, reason: "invalid workflow" },
   ]);
   assert.ok(out);
-  assert.match(out, /2 tool\(s\)/);
+  assert.match(out, /3 tool\(s\)/);
   assert.match(out, /csv-parse: quarantined/);
   assert.match(out, /web-fetch: needs review/);
+  assert.match(out, /broken-flow: invalid/);
 });

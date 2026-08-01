@@ -2,8 +2,9 @@ import { APPROVAL_DECISION, GATE1_KIND, type ApprovalPolicy, type WorkflowGate1P
 import { CHAT_ROLE, type LLMProvider } from "../llm/LLMProvider.ts";
 import type { Sandbox } from "../sandbox/sandbox.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
-import type { ApprovalRecord, Permissions, Tool, ToolDraft, ToolManifest, ToolResult } from "../types.ts";
-import { hashTool } from "../hash.ts";
+import { TOOL_KIND, type ApprovalRecord, type CodeKind, type Permissions, type ToolDraft, type ToolManifest, type ToolResult } from "../types.ts";
+import type { CodeTool, Tool, WorkflowTool } from "../tool.ts";
+import { hashCodeTool, hashWorkflowTool } from "../hash.ts";
 import { normalizePermissions, unionPermissions } from "../permissions-normalize.ts";
 import { staticValidateDraft, type ValidationResult } from "./static-validator.ts";
 import { atomicPrompt, compositePrompt, repairPrompt, DRAFT_SCHEMA } from "./code-gen-prompts.ts";
@@ -22,18 +23,21 @@ import { validate as validateWorkflow } from "../workflow/validator.ts";
 import { renderLiterate } from "../workflow/renderer.ts";
 import type { Workflow } from "../workflow/types.ts";
 
+/** Request payload for {@link ToolFactory.createAtomic}. */
 export type CreateAtomicReq = {
   intent: string;
   rationale: string;
   existingToolsConsidered: string[];
 };
 
+/** Request payload for {@link ToolFactory.createComposite}. */
 export type CreateCompositeReq = {
   name: string;
   intent: string;
   plannedSteps: Array<{ tool: string; argsTemplate: string }>;
 };
 
+/** Request payload for {@link ToolFactory.createWorkflow} / preview. */
 export type CreateWorkflowReq = {
   slice: Invocation[];
   name: string;
@@ -42,10 +46,12 @@ export type CreateWorkflowReq = {
   promotions?: Promotion[];
 };
 
+/** Outcome of a non-persisting workflow lift preview. */
 export type PreviewWorkflowOutcome =
   | { ok: true; workflow: Workflow; literalFallbacks: LiteralFallback[] }
   | { ok: false; reason: string };
 
+/** Dependencies and knobs for constructing a {@link ToolFactory}. */
 export type FactoryOpts = {
   llm: LLMProvider;
   registry: ToolRegistry;
@@ -57,9 +63,34 @@ export type FactoryOpts = {
   approvedBy?: string;
 };
 
+/** Success or failure result of a factory create path. */
 export type FactoryOutcome =
   | { ok: true; tool: Tool; approval: ApprovalRecord }
   | { ok: false; reason: string };
+
+/**
+ * Builds a persistable {@link CodeTool}, fingerprinting the source and manifest via {@link hashCodeTool}.
+ *
+ * @param manifestSansHash Code-kind manifest data, excluding `hash`.
+ * @param code             Tool source as it will be written to disk.
+ */
+function codeToolFrom(manifestSansHash: Omit<ToolManifest, "hash"> & { kind: CodeKind }, code: string): CodeTool {
+  return { manifest: { ...manifestSansHash, hash: hashCodeTool(code, manifestSansHash) }, code };
+}
+
+/**
+ * Builds a persistable {@link WorkflowTool}, fingerprinting the serialized IR and manifest via
+ * {@link hashWorkflowTool} so the hash matches the bytes `saveWorkflow` writes.
+ *
+ * @param manifestSansHash Workflow-kind manifest data, excluding `hash`.
+ * @param workflow         Typed workflow IR to persist.
+ */
+function workflowToolFrom(
+  manifestSansHash: Omit<ToolManifest, "hash"> & { kind: typeof TOOL_KIND.WORKFLOW },
+  workflow: Workflow,
+): WorkflowTool {
+  return { manifest: { ...manifestSansHash, hash: hashWorkflowTool(workflow, manifestSansHash) }, workflow };
+}
 
 /**
  * ToolFactory is responsible for generating, validating, repairing, and registering new tools
@@ -117,13 +148,24 @@ export class ToolFactory {
   }
 
   /**
+   * Loads a registered tool of either kind, dispatching on the stored kind so the
+   * kind-explicit registry getters are used. Returns null when the name is unknown.
+   */
+  private async loadTool(name: string): Promise<Tool | null> {
+    const kind = await this.opts.registry.getKind(name);
+    if (kind === null) return null;
+    if (kind === TOOL_KIND.WORKFLOW) return this.opts.registry.getWorkflow(name);
+    return this.opts.registry.getCode(name);
+  }
+
+  /**
    * Lifts a workflow from the request's slice using registered tools, returning the LiftResult.
    * Extracted to share between createWorkflow and previewWorkflow.
    */
   private async liftSlice(req: CreateWorkflowReq): Promise<LiftResult> {
     const toolsByName: Record<string, Tool> = {};
     for (const summary of this.opts.registry.listSync()) {
-      const tool = await this.opts.registry.get(summary.name);
+      const tool = await this.loadTool(summary.name);
       if (tool) toolsByName[summary.name] = tool;
     }
     return liftFromTrace({
@@ -209,10 +251,11 @@ export class ToolFactory {
     const finalName = decision.editedName ?? workflow.name;
     const finalDescription = decision.editedDescription ?? workflow.description;
     const finalWorkflow = { ...workflow, name: finalName, description: finalDescription };
-    const workflowJson = JSON.stringify(finalWorkflow, null, 2);
     const { hash: _liftHash, ...manifestSansHash } = manifest;
-    const finalManifest = { ...manifestSansHash, name: finalName, description: finalDescription };
-    const tool = this.toolFromManifestAndCode(finalManifest, workflowJson);
+    const tool = workflowToolFrom(
+      { ...manifestSansHash, name: finalName, description: finalDescription, kind: TOOL_KIND.WORKFLOW },
+      finalWorkflow,
+    );
 
     const approval: ApprovalRecord = {
       hash: tool.manifest.hash,
@@ -222,7 +265,7 @@ export class ToolFactory {
       ...(decision.notes !== undefined ? { notes: decision.notes } : {}),
     };
 
-    await this.opts.registry.save(tool, approval);
+    await this.opts.registry.saveWorkflow(tool, approval);
     this.opts.tracer.log(TRACE_KIND_TOOL_CREATED, { name: tool.manifest.name, hash: tool.manifest.hash, approvedBy: this.approvedBy });
     return { ok: true, tool, approval };
   }
@@ -314,13 +357,13 @@ export class ToolFactory {
    * @param input Example input for the tool's smoke test
    * @returns The outcome of execution (ToolResult)
    */
-  private async smokeTest(tool: Tool, input: unknown): Promise<ToolResult> {
-    if (tool.manifest.kind === "atomic") {
+  private async smokeTest(tool: CodeTool, input: unknown): Promise<ToolResult> {
+    if (tool.manifest.kind === TOOL_KIND.ATOMIC) {
       return this.opts.sandbox.execute(tool, input);
     }
     const makeInvoker = (d: number) => async (name: string, args: unknown): Promise<ToolResult> => {
-      const dep = await this.opts.registry.get(name);
-      if (!dep) return { ok: false, error: { kind: "unknown_tool", message: `dependency '${name}' not in registry` } };
+      const dep = await this.opts.registry.getCode(name);
+      if (!dep) return { ok: false, error: { kind: "unknown_tool", message: `dependency '${name}' is not a code tool in the registry` } };
       return this.opts.sandbox.execute(dep, args, {
         onInvokeTool: makeInvoker(d + 1),
         depth: d,
@@ -396,7 +439,7 @@ export class ToolFactory {
       alwaysApprove: decision.alwaysApprove,
       ...(decision.notes !== undefined ? { notes: decision.notes } : {}),
     };
-    await this.opts.registry.save(tool, approval);
+    await this.opts.registry.saveCode(tool, approval);
     this.opts.tracer.log(TRACE_KIND_TOOL_CREATED, { name: tool.manifest.name, hash: tool.manifest.hash, approvedBy: this.approvedBy });
     return { ok: true, tool, approval };
   }
@@ -406,8 +449,8 @@ export class ToolFactory {
     const depNames = [...new Set(workflow.steps.map((s) => s.tool))];
     const depPerms: Permissions[] = [];
     for (const name of depNames) {
-      const dep = await this.opts.registry.get(name);
-      if (dep) depPerms.push(dep.manifest.permissions);
+      const manifest = await this.opts.registry.getManifest(name);
+      if (manifest) depPerms.push(manifest.permissions);
     }
     return unionPermissions(depPerms);
   }
@@ -416,8 +459,8 @@ export class ToolFactory {
    * Converts a ToolDraft (validated) into a Tool instance with manifest and hashed registry entry.
    * @param draft A validated tool draft.
    */
-  private draftToTool(draft: ToolDraft): Tool {
-    const manifestSansHash: Omit<ToolManifest, "hash"> = {
+  private draftToTool(draft: ToolDraft): CodeTool {
+    const manifestSansHash: Omit<ToolManifest, "hash"> & { kind: CodeKind } = {
       name: draft.name,
       description: draft.description,
       rationale: draft.rationale,
@@ -429,19 +472,7 @@ export class ToolFactory {
       createdAt: new Date().toISOString(),
       kind: draft.kind,
     };
-    return this.toolFromManifestAndCode(manifestSansHash, draft.code);
-  }
-
-  /**
-   * Builds a persisted {@link Tool} with a registry hash over `code` and manifest fields (excluding hash).
-   * Uses {@link hashTool} so atomic, composite, and workflow tools share one fingerprint scheme.
-   * @param manifest Tool manifest data, excluding hash.
-   * @param code     Tool code as a string.
-   * @returns Persistable Tool instance.
-   */
-  private toolFromManifestAndCode(manifest: Omit<ToolManifest, "hash">, code: string): Tool {
-    const hash = hashTool(code, manifest);
-    return { manifest: { ...manifest, hash }, code };
+    return codeToolFrom(manifestSansHash, draft.code);
   }
 
   /**

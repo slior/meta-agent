@@ -10,8 +10,9 @@ import { NodePermissionSandbox } from "../sandbox/node-permission-sandbox.ts";
 import { APPROVAL_DECISION, GATE1_KIND, type Gate1ReviewPayload } from "../approval/interface.ts";
 import { TieredApprovalPolicy } from "../approval/tiered-policy.ts";
 import { Tracer } from "../tracer.ts";
-import type { Tool, ToolDraft } from "../types.ts";
-import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
+import { TOOL_KIND, type ToolDraft } from "../types.ts";
+import { isWorkflowTool } from "../tool.ts";
+import { makeConsistentApproval, makeConsistentCodeTool } from "../testing/tool-fixtures.ts";
 
 const GOOD_DRAFT: ToolDraft = {
   name: "double-int",
@@ -100,7 +101,7 @@ test("factory: rejected by reviewer returns failure", async () => {
 });
 
 const FETCH_CODE = `export async function run(i) { return "text"; }`;
-const FETCH_TOOL = makeConsistentTool(
+const FETCH_TOOL = makeConsistentCodeTool(
   {
     name: "fetch-webpage-text",
     description: "Fetches text content from a URL",
@@ -117,7 +118,7 @@ const FETCH_TOOL = makeConsistentTool(
 );
 
 const WRITE_CODE = `export async function run(i) { return { written: true }; }`;
-const WRITE_TOOL = makeConsistentTool(
+const WRITE_TOOL = makeConsistentCodeTool(
   {
     name: "write-file-text",
     description: "Writes text content to a file",
@@ -141,8 +142,8 @@ describe("createWorkflow and previewWorkflow", () => {
   before(async () => {
     wfDir = await mkdtemp(join(tmpdir(), "fac-wf-"));
     wfRegistry = await FsToolRegistry.open(join(wfDir, "tools"));
-    await wfRegistry.save(FETCH_TOOL, makeConsistentApproval(FETCH_TOOL));
-    await wfRegistry.save(WRITE_TOOL, makeConsistentApproval(WRITE_TOOL));
+    await wfRegistry.saveCode(FETCH_TOOL, makeConsistentApproval(FETCH_TOOL));
+    await wfRegistry.saveCode(WRITE_TOOL, makeConsistentApproval(WRITE_TOOL));
 
     const sandbox = new NodePermissionSandbox({ workspace: wfDir });
     const llm = new MockLLMProvider();
@@ -183,6 +184,31 @@ describe("createWorkflow and previewWorkflow", () => {
     assert.ok("path" in schema.properties);
   });
 
+  test("createWorkflow: returns a WorkflowTool and persists it through saveWorkflow", async () => {
+    const slice = [
+      { name: "fetch-webpage-text", args: { url: "https://x/typed.md" }, ok: true, value: "text" },
+      { name: "write-file-text", args: { path: "./typed.md", content: "text" }, ok: true, value: { written: true } },
+    ];
+    const out = await factory.createWorkflow({
+      slice, name: "typed_workflow", intent: "typed", description: "typed workflow",
+    });
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+
+    const created = out.tool;
+    assert.ok(isWorkflowTool(created), "createWorkflow must return a WorkflowTool, not a code tool");
+    assert.equal(created.manifest.kind, TOOL_KIND.WORKFLOW);
+    assert.equal(created.workflow.name, "typed_workflow");
+    assert.equal(created.workflow.steps.length, 2);
+
+    // saveWorkflow (not saveCode) is the persistence path: the entry reads back as a workflow only.
+    const persisted = await wfRegistry.getWorkflow("typed_workflow");
+    assert.ok(persisted, "workflow tool must be readable via getWorkflow");
+    assert.deepEqual(persisted.workflow, created.workflow);
+    assert.equal(persisted.manifest.hash, created.manifest.hash);
+    assert.equal(await wfRegistry.getCode("typed_workflow"), null);
+  });
+
   test("previewWorkflow: returns literalFallbacks without persisting", async () => {
     const slice = [{ name: "fetch-webpage-text", args: { url: "https://x" }, ok: true, value: "t" }];
     const pv = await factory.previewWorkflow({ slice, name: "x", intent: "", description: "" });
@@ -190,8 +216,7 @@ describe("createWorkflow and previewWorkflow", () => {
     if (!pv.ok) return;
     assert.ok(pv.literalFallbacks.some((f) => f.argName === "url"));
     // Confirm not persisted — tool with name "x" should not be in registry
-    const saved = await wfRegistry.get("x");
-    assert.ok(!saved);
+    assert.equal(await wfRegistry.getManifest("x"), null);
   });
 
   test("createWorkflow: calls reviewDraft with workflow payload before saving", async () => {

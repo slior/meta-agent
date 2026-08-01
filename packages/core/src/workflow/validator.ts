@@ -3,6 +3,7 @@ import type { ToolRegistry } from "../registry/tool-registry.ts";
 import { KNOWN_TOOL_CAPABILITIES } from "../types.ts";
 import { IR_SCHEMA_VERSION, STEP_KIND, ARG_KIND, type Argument, type Step, type Workflow } from "./types.ts";
 
+/** One structural or semantic problem found while validating a workflow. */
 export type ValidationError = {
   code: string;
   message: string;
@@ -10,6 +11,7 @@ export type ValidationError = {
   pointer?: string;
 };
 
+/** Outcome of {@link validate}: ok, or a list of {@link ValidationError}s. */
 export type ValidationResult = { ok: true } | { ok: false; errors: ValidationError[] };
 
 const BINDING_NAME = /^[a-z_][a-z0-9_]*$/i;
@@ -143,13 +145,13 @@ export async function validate(workflow: Workflow, registry: ToolRegistry): Prom
       );
     }
 
-    const callee = await registry.get(step.tool);
-    if (!callee && !META_TOOL_NAMES.has(step.tool)) {
+    const calleeManifest = await registry.getManifest(step.tool);
+    if (!calleeManifest && !META_TOOL_NAMES.has(step.tool)) {
       pushStepValidationError(errors, step, `${stepPtr}/tool`, "unknown_tool", `tool '${step.tool}' is not in the registry`);
     }
 
-    if (callee?.manifest.capabilities) {
-      for (const cap of callee.manifest.capabilities) {
+    if (calleeManifest?.capabilities) {
+      for (const cap of calleeManifest.capabilities) {
         if (!KNOWN_TOOL_CAPABILITIES.has(cap)) {
           pushStepValidationError(
             errors, step, `${stepPtr}/tool`,
@@ -165,8 +167,8 @@ export async function validate(workflow: Workflow, registry: ToolRegistry): Prom
       }
     }
 
-    if (callee) {
-      checkArgumentKeysAgainstSchema(step, callee.manifest.inputSchema, errors, stepPtr);
+    if (calleeManifest) {
+      checkArgumentKeysAgainstSchema(step, calleeManifest.inputSchema, errors, stepPtr);
     }
 
     if (step.resultBinding !== null && BINDING_NAME.test(step.resultBinding) && !bindings.has(step.resultBinding)) {

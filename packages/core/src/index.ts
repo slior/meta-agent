@@ -1,7 +1,10 @@
+/** Package semver string for diagnostics and CLI banners. */
 export const version = "0.1.0";
 export * from "./types.ts";
+export type { CodeTool, WorkflowTool, Tool } from "./tool.ts";
+export { isCodeTool, isWorkflowTool } from "./tool.ts";
 export * from "./schemas.ts";
-export * from "./hash.ts";
+export { canonicalJson, hashCodeTool, hashWorkflowTool, serializeWorkflowBody } from "./hash.ts";
 export * from "./errors.ts";
 export {
   Tracer, TRACE_KIND_EXECUTION_DENIED, TRACE_KIND_FACTORY_GEN_DRAFT, TRACE_KIND_FACTORY_REPAIR_LLM,
@@ -14,12 +17,18 @@ export type { TraceEvent, TracerObserver, TracerOptions, LlmTracePhase } from ".
 export type { ToolRegistry } from "./registry/tool-registry.ts";
 export { FsToolRegistry } from "./registry/fs-registry.ts";
 export {
+  INTEGRITY_BODY_KIND,
   INTEGRITY_STATUS,
   INTEGRITY_REASON,
   RegistryIntegrityError,
   verifyToolIntegrity,
 } from "./registry/integrity.ts";
-export type { IntegrityStatus, IntegrityResult, IntegrityIssue } from "./registry/integrity.ts";
+export type {
+  IntegrityBodyKind,
+  IntegrityStatus,
+  IntegrityResult,
+  IntegrityIssue,
+} from "./registry/integrity.ts";
 export type { ToolIndex } from "./index-store/interface.ts";
 export { HybridToolIndex } from "./index-store/hybrid-index.ts";
 export { APPROVAL_DECISION, GATE1_KIND, RISK_TIER } from "./approval/interface.ts";

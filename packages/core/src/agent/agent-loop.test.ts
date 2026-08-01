@@ -15,13 +15,15 @@ import { TRACE_KIND_EXECUTION_DENIED, TRACE_KIND_TOOL_INVOKED, Tracer, type Trac
 import { ToolFactory } from "../factory/factory.ts";
 import { CHAT_ROLE, CHAT_TOOL_TYPE, type ChatResponse } from "../llm/LLMProvider.ts";
 import { META_FN } from "./meta-tools.ts";
-import { makeConsistentApproval, makeConsistentTool } from "../testing/tool-fixtures.ts";
-import { TOOL_ERROR_KIND, type ApprovalRecord, type Tool } from "../types.ts";
+import { makeConsistentApproval, makeConsistentCodeTool, makeConsistentWorkflowTool } from "../testing/tool-fixtures.ts";
+import { TOOL_ERROR_KIND, type ApprovalRecord } from "../types.ts";
+import type { Tool } from "../tool.ts";
+import { ARG_KIND, IR_SCHEMA_VERSION, STEP_KIND, type Workflow } from "../workflow/types.ts";
 
 const SAMPLE_BODY = "export async function run(i){return i;}";
 
 function sampleTool(name: string) {
-  return makeConsistentTool(
+  return makeConsistentCodeTool(
     {
       name,
       description: `desc of ${name}`,
@@ -121,7 +123,7 @@ test("agent: find_tool with hits does not inject empty-find recovery", async () 
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
     const alpha = sampleTool("alpha");
-    await registry.save(alpha, makeConsistentApproval(alpha));
+    await registry.saveCode(alpha, makeConsistentApproval(alpha));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const llm = new MockLLMProvider()
@@ -306,7 +308,7 @@ test("agent: empty find_tool injects recovery user before next chat", async () =
 // ─── workflow inputSchema validation tests ────────────────────────────────────
 
 const DOUBLE_CODE = `export async function run(input) { return input.n * 2; }`;
-const DOUBLE_TOOL_FOR_WF = makeConsistentTool(
+const DOUBLE_TOOL_FOR_WF = makeConsistentCodeTool(
   {
     name: "double",
     description: "Doubles a number",
@@ -322,24 +324,24 @@ const DOUBLE_TOOL_FOR_WF = makeConsistentTool(
   DOUBLE_CODE,
 );
 
-const FETCH_AND_DOUBLE_BODY = JSON.stringify({
-  schemaVersion: 1,
+const FETCH_AND_DOUBLE_WORKFLOW: Workflow = {
+  schemaVersion: IR_SCHEMA_VERSION,
   name: "fetch-and-double",
   description: "Test workflow",
   goal: "test",
   inputs: [{ name: "url", schema: { type: "string" }, required: true }],
   steps: [
     {
-      kind: "tool_call",
+      kind: STEP_KIND.tool_call,
       label: "step1",
       tool: "double",
-      arguments: { n: { kind: "literal", value: 2 } },
+      arguments: { n: { kind: ARG_KIND.literal, value: 2 } },
       resultBinding: "result",
     },
   ],
-  return: { source: { kind: "symref", ref: "result" } },
-});
-const FETCH_AND_DOUBLE_TOOL = makeConsistentTool(
+  return: { source: { kind: ARG_KIND.symref, ref: "result" } },
+};
+const FETCH_AND_DOUBLE_TOOL = makeConsistentWorkflowTool(
   {
     name: "fetch-and-double",
     description: "Test workflow with required url parameter",
@@ -357,15 +359,15 @@ const FETCH_AND_DOUBLE_TOOL = makeConsistentTool(
     createdAt: "2026-01-01T00:00:00Z",
     kind: "workflow",
   },
-  FETCH_AND_DOUBLE_BODY,
+  FETCH_AND_DOUBLE_WORKFLOW,
 );
 
 test("agent: workflow inputSchema — missing required field yields schema_violation", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
@@ -395,8 +397,8 @@ test("agent: workflow inputSchema — unknown key rejected when additionalProper
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
@@ -426,8 +428,8 @@ test("agent: workflow inputSchema — valid input dispatches to executor success
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
@@ -452,24 +454,24 @@ test("agent: workflow inputSchema — valid input dispatches to executor success
   }
 });
 
-const CLOSED_WF_BODY = JSON.stringify({
-  schemaVersion: 1,
+const CLOSED_WORKFLOW: Workflow = {
+  schemaVersion: IR_SCHEMA_VERSION,
   name: "closed-workflow",
   description: "Test closed workflow",
   goal: "test",
   inputs: [],
   steps: [
     {
-      kind: "tool_call",
+      kind: STEP_KIND.tool_call,
       label: "step1",
       tool: "double",
-      arguments: { n: { kind: "literal", value: 3 } },
+      arguments: { n: { kind: ARG_KIND.literal, value: 3 } },
       resultBinding: "result",
     },
   ],
-  return: { source: { kind: "symref", ref: "result" } },
-});
-const CLOSED_WF_TOOL = makeConsistentTool(
+  return: { source: { kind: ARG_KIND.symref, ref: "result" } },
+};
+const CLOSED_WF_TOOL = makeConsistentWorkflowTool(
   {
     name: "closed-workflow",
     description: "Test workflow with no declared parameters",
@@ -482,15 +484,15 @@ const CLOSED_WF_TOOL = makeConsistentTool(
     createdAt: "2026-01-01T00:00:00Z",
     kind: "workflow",
   },
-  CLOSED_WF_BODY,
+  CLOSED_WORKFLOW,
 );
 
 test("agent: workflow inputSchema — closed workflow (inputSchema: {}) accepts any input", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(CLOSED_WF_TOOL, makeConsistentApproval(CLOSED_WF_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(CLOSED_WF_TOOL, makeConsistentApproval(CLOSED_WF_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = { promptGate1: async () => { throw new Error("no"); }, promptGate23: async () => { throw new Error("no"); } };
@@ -541,8 +543,8 @@ test("agent: workflow wrapper checkExecution is called before executor runs", as
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
@@ -568,8 +570,8 @@ test("agent: rejected workflow wrapper returns rejected_by_user without running 
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
@@ -600,8 +602,8 @@ test("agent: workflow wrapper emits tool-invoked and not execution-denied on suc
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const captured: TraceEvent[] = [];
@@ -630,8 +632,8 @@ test("agent: rejected workflow wrapper emits execution-denied trace event", asyn
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const captured: TraceEvent[] = [];
@@ -658,8 +660,8 @@ test("agent: workflow wrapper calls onToolInvoked at depth 0 on success", async 
   const dir = await mkdtemp(join(tmpdir(), "agent-wf-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
-    await registry.save(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
+    await registry.saveCode(DOUBLE_TOOL_FOR_WF, makeConsistentApproval(DOUBLE_TOOL_FOR_WF));
+    await registry.saveWorkflow(FETCH_AND_DOUBLE_TOOL, makeConsistentApproval(FETCH_AND_DOUBLE_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const tracer = await Tracer.open(join(dir, "traces"), "s");
@@ -684,7 +686,7 @@ test("agent: workflow wrapper calls onToolInvoked at depth 0 on success", async 
 
 // ─── output schema violation ──────────────────────────────────────────────────
 
-const OUTPUT_VIOLATION_TOOL = makeConsistentTool(
+const OUTPUT_VIOLATION_TOOL = makeConsistentCodeTool(
   {
     name: "wrong-shape",
     description: "Returns wrong shape on purpose.",
@@ -706,7 +708,7 @@ test("agent: output_schema_violation returned to LLM and value not stored in Res
   const dir = await mkdtemp(join(tmpdir(), "agent-osv-"));
   try {
     const registry = await FsToolRegistry.open(join(dir, "tools"));
-    await registry.save(OUTPUT_VIOLATION_TOOL, makeConsistentApproval(OUTPUT_VIOLATION_TOOL));
+    await registry.saveCode(OUTPUT_VIOLATION_TOOL, makeConsistentApproval(OUTPUT_VIOLATION_TOOL));
     const index = await HybridToolIndex.open(registry);
     const innerSandbox = new NodePermissionSandbox({ workspace: dir });
     const prompter = {

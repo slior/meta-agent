@@ -2,12 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { APPROVAL_DECISION, GATE1_KIND, RISK_TIER, type Gate1ReviewPayload, type WorkflowGate1Payload } from "./interface.ts";
 import { TieredApprovalPolicy, riskTier } from "./tiered-policy.ts";
-import type { ApprovalRecord, Permissions, Tool } from "../types.ts";
+import type { ApprovalRecord, Permissions } from "../types.ts";
+import type { CodeTool } from "../tool.ts";
+import { makeConsistentCodeTool } from "../testing/tool-fixtures.ts";
 
-function mkTool(perms: Partial<Permissions> = {}, hash = "sha256:" + "a".repeat(64)): Tool {
-  return {
-    code: "",
-    manifest: {
+const MK_TOOL_CODE = "export async function run(i){return i;}";
+
+function mkTool(perms: Partial<Permissions> = {}): CodeTool {
+  return makeConsistentCodeTool(
+    {
       name: "t", description: "d", rationale: "r",
       inputSchema: { type: "object" }, outputShape: { type: "object" },
       permissions: {
@@ -15,9 +18,10 @@ function mkTool(perms: Partial<Permissions> = {}, hash = "sha256:" + "a".repeat(
         ...perms,
       },
       dependencies: [], limits: { timeoutMs: 30000, maxOldSpaceSizeMb: 256 },
-      hash, createdAt: "2026-04-21T00:00:00Z", kind: "atomic",
+      createdAt: "2026-04-21T00:00:00Z", kind: "atomic",
     },
-  };
+    MK_TOOL_CODE,
+  );
 }
 
 test("riskTier: empty permissions => low", () => {

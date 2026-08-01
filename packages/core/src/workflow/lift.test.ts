@@ -3,48 +3,40 @@ import assert from "node:assert/strict";
 import { liftFromTrace, inputSchemaFromInputs } from "./lift.ts";
 import { validate } from "./validator.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
-import type { Tool, ToolSummary } from "../types.ts";
+import type { Permissions, ToolSummary } from "../types.ts";
+import { isCodeTool, type CodeTool, type Tool } from "../tool.ts";
+import { makeConsistentCodeTool } from "../testing/tool-fixtures.ts";
 
-const FETCH: Tool = {
-  manifest: {
-    name: "read-csv",
-    description: "",
-    rationale: "",
-    inputSchema: {},
-    outputShape: {},
-    permissions: { fsRead: ["/x.csv"], fsWrite: [], net: "none", netAllowlist: [], env: [] },
-    dependencies: [],
-    limits: { timeoutMs: 1000, maxOldSpaceSizeMb: 64 },
-    hash: "sha256:0",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    kind: "atomic",
-  },
-  code: "",
-};
-const FILTER: Tool = {
-  ...FETCH,
-  manifest: { ...FETCH.manifest, name: "filter-rows", permissions: { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] } },
-};
-const COUNT: Tool = {
-  ...FETCH,
-  manifest: { ...FETCH.manifest, name: "count-rows", permissions: { fsRead: [], fsWrite: [], net: "allowlist", netAllowlist: ["api"], env: [] } },
-};
-const STRING_OUT: Tool = {
-  ...FETCH,
-  manifest: {
-    ...FETCH.manifest,
-    name: "string-tool",
-    outputShape: { type: "string" },
-  },
-};
-const NUMBER_OUT: Tool = {
-  ...FETCH,
-  manifest: {
-    ...FETCH.manifest,
-    name: "number-tool",
-    outputShape: { type: "number" },
-  },
-};
+const TOOL_CODE = "export async function run(){return {};}";
+const NO_PERMISSIONS: Permissions = { fsRead: [], fsWrite: [], net: "none", netAllowlist: [], env: [] };
+
+function makeTool(
+  name: string,
+  permissions: Permissions = NO_PERMISSIONS,
+  outputShape: Record<string, unknown> = {},
+): CodeTool {
+  return makeConsistentCodeTool(
+    {
+      name,
+      description: "",
+      rationale: "",
+      inputSchema: {},
+      outputShape,
+      permissions,
+      dependencies: [],
+      limits: { timeoutMs: 1000, maxOldSpaceSizeMb: 64 },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      kind: "atomic",
+    },
+    TOOL_CODE,
+  );
+}
+
+const FETCH = makeTool("read-csv", { ...NO_PERMISSIONS, fsRead: ["/x.csv"] });
+const FILTER = makeTool("filter-rows");
+const COUNT = makeTool("count-rows", { ...NO_PERMISSIONS, net: "allowlist", netAllowlist: ["api"] });
+const STRING_OUT = makeTool("string-tool", NO_PERMISSIONS, { type: "string" });
+const NUMBER_OUT = makeTool("number-tool", NO_PERMISSIONS, { type: "number" });
 
 const TOOLS: Record<string, Tool> = {
   "read-csv": FETCH,
@@ -53,8 +45,8 @@ const TOOLS: Record<string, Tool> = {
 };
 
 const REF_TOOLS: Record<string, Tool> = {
-  fetch: { ...FETCH, manifest: { ...FETCH.manifest, name: "fetch" } },
-  summarize: { ...FETCH, manifest: { ...FETCH.manifest, name: "summarize" } },
+  fetch: makeTool("fetch"),
+  summarize: makeTool("summarize"),
 };
 
 const SLICE = [
@@ -191,13 +183,20 @@ test("lift: kebab-case tool names produce validator-safe bindings (compose regre
     list: async () => summaries,
     listSync: () => summaries,
     has: async (n) => n in tools,
-    get: async (n) => tools[n] ?? null,
+    getKind: async (n) => tools[n]?.manifest.kind ?? null,
+    getManifest: async (n) => tools[n]?.manifest ?? null,
+    getCode: async (n) => {
+      const t = tools[n];
+      return t && isCodeTool(t) ? t : null;
+    },
+    getWorkflow: async () => null,
     getApproval: async () => null,
-    save: async () => {},
+    saveCode: async () => {},
+    saveWorkflow: async () => {},
     delete: async () => {},
     getDependents: async () => [],
     rootDir: () => "/tmp",
-    getWorkflow: async () => null,
+    integrityReport: () => [],
   };
   const validation = await validate(out.workflow, registry);
   assert.equal(validation.ok, true, !validation.ok ? validation.errors.map((e) => e.message).join("; ") : "");

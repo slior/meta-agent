@@ -1,0 +1,26 @@
+{
+  "name": "echo-code",
+  "description": "Legacy echo code fixture",
+  "rationale": "Frozen pre-change registry fixture",
+  "inputSchema": {
+    "type": "object"
+  },
+  "outputShape": {
+    "type": "object"
+  },
+  "permissions": {
+    "fsRead": [],
+    "fsWrite": [],
+    "net": "none",
+    "netAllowlist": [],
+    "env": []
+  },
+  "dependencies": [],
+  "limits": {
+    "timeoutMs": 30000,
+    "maxOldSpaceSizeMb": 256
+  },
+  "createdAt": "2026-08-01T00:00:00.000Z",
+  "kind": "atomic",
+  "hash": "sha256:9862569b9ef1afb663a05e680f3d2907da93d94df3fec22cd30ebf9670fc1a87"
+}

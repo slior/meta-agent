@@ -103,7 +103,10 @@ flowchart TB
 **Component responsibilities:**
 
 - **`AgentLoop`** — owns the conversation state, assembles the tool catalog for the system prompt, calls the LLM, dispatches tool calls, logs events. Depends on `PolicyEnforcedSandbox` (not a raw `Sandbox`) for atomic/composite execution, so Gate 2/3 approval is structurally in the path. Workflow tools call `checkExecution` in-loop before `WorkflowExecutor` runs.
-- **`ToolRegistry`** — CRUD over tools (load, save, delete, get by name, list, dependency lookup). Default = filesystem under `./tools/<name>/{tool.ts, manifest.json, approval.json}`.
+- **`ToolRegistry`** — kind-explicit persistence over saved tools. It reads and writes
+  `CodeTool` and `WorkflowTool` bodies separately, supports metadata-only reads,
+  and keeps the filesystem layout under
+  `./tools/<name>/{tool.ts|workflow.json, manifest.json, approval.json}`.
 - **`ToolIndex`** — answers "given a natural-language query, which existing tools are relevant?" Default = hybrid (always-on mini-catalog in prompt + `find_tool` meta-tool using substring/BM25-lite over manifest text). Embedding-based implementation pluggable behind the same interface (Section 10).
 - **`Sandbox`** — pure subprocess execution: given tool, args, and manifest, runs the tool under Node `--permission` flags; returns `{ok, value} | {ok:false, error}`. Has **no approval knowledge** — policy is the caller's responsibility.
 - **`PolicyEnforcedSandbox`** — wraps a raw `Sandbox` and calls `ApprovalPolicy.checkExecution` before every delegation. This is what `AgentLoop` receives at construction time; it makes accidental policy bypass structurally impossible for agent-driven tool runs.
@@ -146,7 +149,7 @@ sequenceDiagram
     F->>P: review(ToolDraft, smokeTestResult)
     P-->>F: approve | approve-with-edits | reject
     alt approved
-        F->>R: save(tool)
+        F->>R: saveCode(tool)
         F->>T: log(tool-created)
         F-->>A: ToolRef
     else rejected
@@ -216,7 +219,13 @@ What the reviewer sees:
 
 ### 4.6 Approval caching key
 
-`sha256(code || canonicalJson(manifest))`. Any change to either invalidates prior approval, which causes re-prompting at Gate 2/3 and at every future execution until re-approved.
+The approval key is `sha256(body || canonicalJson(manifest))`, where the body is
+`tool.ts` source for an atomic/composite tool or the serialized `workflow.json`
+body for a workflow tool. Public creation paths use `hashCodeTool` or
+`hashWorkflowTool`; the registry's integrity boundary uses package-internal
+`hashToolBody` for raw disk bytes. Any body or manifest change invalidates prior
+approval, which causes re-prompting at Gate 2/3 and at every future execution
+until re-approved.
 
 ### 4.7 On-disk result
 
@@ -232,18 +241,32 @@ tools/
 
 ### 4.7a Persistence integrity boundary
 
-The approval hash only means something if the registry re-derives it from disk. On load and save, `FsToolRegistry` calls `verifyToolIntegrity(body, manifest, approval)` (see `packages/core/src/registry/integrity.ts`), which checks two links:
+The approval hash only means something if the registry re-derives it from disk.
+On load and save, `FsToolRegistry` calls `verifyToolIntegrity(body, manifest,
+approval)` (see `packages/core/src/registry/integrity.ts`), which checks two
+links. Public callers use `hashCodeTool` or `hashWorkflowTool`; the
+package-internal `hashToolBody` accepts the raw body used by integrity checks.
 
-- **Link A — manifest ⇄ body:** `manifest.hash` must equal `hashTool(body, manifestSansHash)`, where `body` is `tool.ts` (atomic/composite) or `workflow.json` (workflow).
+- **Link A — manifest ⇄ body:** `manifest.hash` must equal the raw-body digest
+  over `tool.ts` (atomic/composite) or `workflow.json` (workflow) and the
+  manifest fields. Rehydration hashes the exact bytes read from disk, never a
+  parsed-and-reserialized workflow, preserving valid legacy formatting. New
+  workflow saves serialize through `serializeWorkflowBody` and hash exactly
+  those bytes.
 - **Link B — approval ⇄ manifest:** an approval record must exist with `approval.hash === manifest.hash`.
 
 Reactions:
 
 - **Link A fails → quarantine.** The entry is not loaded into the usable cache (undiscoverable, unexecutable). The manifest is untrustworthy, so its declared risk tier is not trusted either. This applies even under `yolo`, because it happens at load before the cache exists.
+- **Workflow structural parse fails after Link A → invalid.** The entry is
+  hash-authentic but unusable, so it is not cached or runnable and is surfaced
+  through `integrityReport()` as `invalid`, not `quarantined`.
 - **Link B fails → needs review.** The content is authentic but unapproved; the entry loads but its approval is treated as `null`, so `checkExecution` must prompt before any execution and can never auto-approve it via the low tier, session cache, or always-approve. This also closes the hole where a low-tier tool with no `approval.json` ran with zero prompts. Under `yolo`, needs-review tools still run (yolo accepts running unapproved authentic code; it does not accept running corrupted tools).
 - **save** throws `RegistryIntegrityError` before writing if the tool it is asked to persist is not self-consistent, so the registry can never write a broken entry.
 
-Every quarantine/needs-review event is both recorded (queryable via `registry.integrityReport()`) and logged to stderr (`registryLogWarn`); the CLI prints a summary at startup.
+Every quarantine/needs-review/invalid event is both recorded (queryable via
+`registry.integrityReport()`) and logged to stderr (`registryLogWarn`); the CLI
+prints a summary at startup.
 
 Out of scope here: durable re-approval of a needs-review tool (it re-prompts every execution until properly re-approved; see L9), JSON-schema shape validation of manifests/approvals (M2), and atomic multi-file writes (M3).
 
@@ -273,8 +296,8 @@ sequenceDiagram
     participant C as Tool subprocess
     participant T as Tracer
 
-    A->>R: get(toolName)
-    R-->>A: Tool {manifest, code, hash, approval}
+    A->>R: getCode(toolName)
+    R-->>A: CodeTool {manifest, code}
     A->>W: execute(tool, args)
     W->>R: getApproval(toolName)
     W->>P: checkExecution(tool, args, approvalRecord)
@@ -290,22 +313,28 @@ sequenceDiagram
         A->>T: log(execution-denied)
         A-->>A: return structured error to LLM
     else approved
-        W->>S: execute(tool, args)
-        S->>S: build CLI flags from manifest.permissions
-        S->>C: spawn: node --permission<br/>--allow-fs-read=... --allow-fs-write=...<br/>--experimental-strip-types<br/>runner.ts tool.ts
-        S->>C: write {args} to stdin as JSON
-        C->>C: import tool.ts, call run(args)
-        alt tool calls invokeTool (composite)
-            C->>S: {"op":"invokeTool","name":"X","args":{...}}<br/>(stdout JSON-RPC)
-            S->>A: re-enter dispatch for X<br/>(recursion with depth cap)
-            A-->>S: result
-            S->>C: write result to stdin
+        W->>S: execute(codeTool, args)
+        S->>S: re-verify Link A: hashToolBody<br/>on bytes that will run
+        alt Link A mismatch
+            S-->>W: {ok:false, permission_denied}<br/>(no subprocess spawned)
+            W-->>A: result
+        else Link A ok
+            S->>S: build CLI flags from manifest.permissions
+            S->>C: spawn: node --permission<br/>--allow-fs-read=... --allow-fs-write=...<br/>--experimental-strip-types<br/>runner.ts tool.ts
+            S->>C: write {args} to stdin as JSON
+            C->>C: import tool.ts, call run(args)
+            alt tool calls invokeTool (composite)
+                C->>S: {"op":"invokeTool","name":"X","args":{...}}<br/>(stdout JSON-RPC)
+                S->>A: re-enter dispatch for X<br/>(recursion with depth cap)
+                A-->>S: result
+                S->>C: write result to stdin
+            end
+            C-->>S: {"ok":true,"value":...} on stdout<br/>(or {"ok":false,"error":...})
+            S->>S: enforce timeout, memory limit,<br/>output size limit
+            S-->>W: result
+            W-->>A: result
+            A->>T: log(tool-invoked, args-hash, result-hash, duration)
         end
-        C-->>S: {"ok":true,"value":...} on stdout<br/>(or {"ok":false,"error":...})
-        S->>S: enforce timeout, memory limit,<br/>output size limit
-        S-->>W: result
-        W-->>A: result
-        A->>T: log(tool-invoked, args-hash, result-hash, duration)
     end
 ```
 
@@ -320,6 +349,16 @@ sequenceDiagram
 `AgentLoopOpts.sandbox` is typed as `PolicyEnforcedSandbox`, not `Sandbox`. A host wiring the agent cannot pass a raw sandbox and skip execution policy by mistake. `ToolFactory` intentionally receives the inner sandbox for pre-Gate-1 smoke tests.
 
 ### 5.1 Sandbox invocation details
+
+**Link A re-verification (execution boundary).** Before spawning a child,
+`NodePermissionSandbox` recomputes Link A with package-internal `hashToolBody`
+over the exact bytes that will run — `tool.code`, or the file at
+`opts.toolPath` when the caller supplies one. If the digest does not match
+`manifest.hash`, the sandbox returns `{ok:false, error:{kind:"permission_denied",...}}`
+and does not spawn a subprocess. This is defense in depth beyond registry
+load-time quarantine (§4.7a): it catches in-memory drift or a caller passing
+code that diverges from the approved manifest. See ADR 009 and
+`repo_structure.md` (sandbox module).
 
 **Command shape.** The parent spawns, argv-based (no shell):
 
@@ -393,6 +432,7 @@ This gives the agent a uniform way to reason about failures and decide whether t
 ### 5.6 Why these shapes
 
 - **`PolicyEnforcedSandbox`** wraps the raw sandbox and calls `checkExecution` before every agent-driven execution. `AgentLoop` requires this type at construction, so policy is in the critical path by structure — not by convention or a discardable parameter on `Sandbox.execute`.
+- **`NodePermissionSandbox` re-verifies Link A** with `hashToolBody` on the bytes that will run before spawn; mismatch returns `permission_denied` without a child process (ADR 009).
 - **No ambient authority on composite calls** (every nested `invokeTool` re-enters policy via the wrapper) means composites cannot launder permissions.
 - **Structured error results, not thrown exceptions** crossing the sandbox boundary keeps the LLM's mental model simple and the trace log clean.
 - **Smoke tests bypass execution policy** via the factory's raw sandbox handle — intentional, because Gate 1 approval does not exist yet; OS `--permission` flags still apply.
@@ -413,15 +453,35 @@ Goal: the agent prefers reusing tools over creating new ones, with minimal promp
 ```ts
 interface ToolRegistry {
   list(): Promise<ToolSummary[]>;              // name, description, hash
-  get(name: string): Promise<Tool | null>;     // full manifest + code
-  save(tool: Tool, approval: ApprovalRecord): Promise<void>;
+  listSync(): ToolSummary[];                   // synchronous catalog snapshot
+  has(name: string): Promise<boolean>;
+  getKind(name: string): Promise<ToolKind | null>;
+  getManifest(name: string): Promise<ToolManifest | null>;
+  getCode(name: string): Promise<CodeTool | null>;
+  getWorkflow(name: string): Promise<WorkflowTool | null>;
+  getApproval(name: string): Promise<ApprovalRecord | null>;
+  saveCode(tool: CodeTool, approval: ApprovalRecord): Promise<void>;
+  saveWorkflow(tool: WorkflowTool, approval: ApprovalRecord): Promise<void>;
   delete(name: string, opts: { cascade?: boolean }): Promise<void>;
   getDependents(name: string): Promise<string[]>; // who imports me (composites)
-  subscribe(listener: (ev: RegistryEvent) => void): Unsubscribe;
+  rootDir(): string;
+  integrityReport(): IntegrityIssue[];
 }
 ```
 
-The default `FsToolRegistry` maintains an in-memory cache built from one pass over `./tools/*/manifest.json` at startup and kept live via `fs.watch`. Dependency edges are extracted from each manifest's `dependencies` field and indexed for `getDependents`.
+`CodeTool` holds TypeScript source and `WorkflowTool` holds typed workflow IR;
+their `Tool` union is discriminated by `manifest.kind`. `getCode` and
+`getWorkflow` return `null` for missing names or the wrong kind, while
+`getManifest` is preferred when a caller needs only permissions, schemas, or
+other metadata. `getWorkflow` returns the enclosing `WorkflowTool`, so callers
+read `.workflow`.
+
+The default `FsToolRegistry` maintains a typed in-memory union cache built from
+one pass over `./tools/*/manifest.json`. On rehydrate it verifies raw body bytes
+before parsing; new workflow saves structurally validate the IR, serialize it
+with `serializeWorkflowBody`, and remove `tool.ts` on a kind change (and vice
+versa for code saves). Dependency edges are extracted from each manifest's
+`dependencies` field and indexed for `getDependents`.
 
 ### 6.2 `ToolIndex` interface
 
@@ -902,7 +962,13 @@ This section records every meaningful choice made during design and what alterna
 
 ### 11.9 Approval caching key
 
-**Chosen:** `sha256(code || canonicalJson(manifest))`. Any change invalidates prior approval.
+**Chosen:** `sha256(body || canonicalJson(manifest))`, with code source as the
+body for atomic/composite tools and the serialized workflow IR as the body for
+workflow tools. `hashCodeTool` and `hashWorkflowTool` provide the public
+kind-specific APIs; `hashToolBody` remains package-internal for raw-body
+integrity verification. On load, registry verification hashes raw file bytes;
+on new workflow saves, `serializeWorkflowBody` produces the bytes that are
+written and hashed. Any change invalidates prior approval.
 
 **Considered:**
 

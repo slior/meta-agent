@@ -1,4 +1,5 @@
-import { PERMISSIONS_NET, type ApprovalRecord, type Permissions, type Tool } from "../types.ts";
+import { PERMISSIONS_NET, type ApprovalRecord, type Permissions } from "../types.ts";
+import type { Tool } from "../tool.ts";
 import {
   APPROVAL_DECISION,
   type ApprovalPolicy,

@@ -130,7 +130,9 @@ export class HybridToolIndex implements ToolIndex {
    * Returns a summary catalog of available tools, limited by maxEntries.
    * Entries provide the tool name, a short description (first sentence, truncated),
    * and the kind of tool.
-   * @param opts - Optional configuration, e.g., { maxEntries }
+   *
+   * @param opts - Optional configuration, e.g., `{ maxEntries }`.
+   * @returns Catalog entries for the system prompt / UI.
    */
   catalog(opts: { maxEntries?: number } = {}): CatalogEntry[] {
     const max = opts.maxEntries ?? DEFAULT_CATALOG_MAX_ENTRIES;
@@ -171,12 +173,12 @@ export class HybridToolIndex implements ToolIndex {
   private async buildCorpus(tools: ToolSummary[]): Promise<CorpusDoc[]> {
     return Promise.all(
       tools.map(async (t) => {
-        const full = await this.registry.get(t.name);
-        const text = [t.name, t.description, full?.manifest.rationale ?? ""].join(" ");
+        const manifest = await this.registry.getManifest(t.name);
+        const text = [t.name, t.description, manifest?.rationale ?? ""].join(" ");
         return {
           name: t.name,
           description: t.description,
-          inputSchema: (full?.manifest.inputSchema ?? {}) as Record<string, unknown>,
+          inputSchema: (manifest?.inputSchema ?? {}) as Record<string, unknown>,
           tokens: tokenize(text),
         };
       }),

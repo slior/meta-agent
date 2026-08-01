@@ -1,5 +1,6 @@
-import { hashTool } from "../hash.ts";
-import type { ApprovalRecord, Tool, ToolManifest } from "../types.ts";
+import { hashCodeTool } from "../hash.ts";
+import type { ApprovalRecord, CodeKind, ToolManifest } from "../types.ts";
+import type { CodeTool } from "../tool.ts";
 import { PERMISSIONS_NET, SOURCE_LABEL, TOOL_CAPABILITY, TOOL_KIND } from "../types.ts";
 import type { ToolRegistry } from "../registry/tool-registry.ts";
 
@@ -9,6 +10,12 @@ export const LLM_GENERATE_NAME = "llm_generate";
 /** Approval `approvedBy` value for trusted built-in tools. */
 export const BUILTIN_APPROVED_BY = "builtin";
 
+/**
+ * True when the approval record marks a trusted host-seeded built-in tool.
+ *
+ * @param approval - Approval record from the registry, or null/undefined when absent.
+ * @returns Whether `approvedBy` is {@link BUILTIN_APPROVED_BY}.
+ */
 export function isBuiltinApproval(approval: ApprovalRecord | null | undefined): boolean {
   return approval?.approvedBy === BUILTIN_APPROVED_BY;
 }
@@ -38,10 +45,10 @@ const LLM_GENERATE_CODE = `export async function run(input) {
  * The hash is computed deterministically using fixed code and metadata, ensuring the tool is
  * identical across agent processes and reproducible for security and caching.
  *
- * @returns {Tool} The `llm_generate` tool object containing its manifest (with hash) and source code.
+ * @returns {CodeTool} The `llm_generate` tool object containing its manifest (with hash) and source code.
  */
-export function buildLLMGenerateTool(): Tool {
-  const manifestNoHash: Omit<ToolManifest, "hash"> = {
+export function buildLLMGenerateTool(): CodeTool {
+  const manifestNoHash: Omit<ToolManifest, "hash"> & { kind: CodeKind } = {
     name: LLM_GENERATE_NAME,
     description:
       "Generate a value with the language model from an instruction and raw input data. " +
@@ -73,7 +80,7 @@ export function buildLLMGenerateTool(): Tool {
     capabilities: [TOOL_CAPABILITY.LLM],
     sourceLabels: [SOURCE_LABEL.LLM_GENERATED],
   };
-  const hash = hashTool(LLM_GENERATE_CODE, manifestNoHash);
+  const hash = hashCodeTool(LLM_GENERATE_CODE, manifestNoHash);
   return { manifest: { ...manifestNoHash, hash }, code: LLM_GENERATE_CODE };
 }
 
@@ -92,5 +99,5 @@ export async function seedBuiltins(registry: ToolRegistry): Promise<void> {
     alwaysApprove: true,
     notes: "Trusted built-in seeded by the host.",
   };
-  await registry.save(tool, approval);
+  await registry.saveCode(tool, approval);
 }

@@ -1,12 +1,14 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizePermissions } from "../permissions-normalize.ts";
-import type { Tool, ToolResult } from "../types.ts";
+import type { ToolResult } from "../types.ts";
+import type { CodeTool } from "../tool.ts";
 import { PERMISSIONS_NET } from "../types.ts";
 import { toolError } from "../errors.ts";
+import { hashToolBody } from "../hash.ts";
 import type { ExecuteOpts, InvokeToolHandler, LlmHandler, Sandbox } from "./sandbox.ts";
 import { sandboxDebug, sandboxDebugEnabled, sandboxLogError, SANDBOX_DEBUG_ENV } from "./sandbox-debug.ts";
 import {
@@ -164,38 +166,68 @@ export class NodePermissionSandbox implements Sandbox {
 
   /**
    * Executes a tool in a controlled subprocess, enforcing resource, permission, and depth constraints.
-   * Sets up a temporary file (if not already provided) for the tool's code, and
+   * Sets up a temporary file containing the verified tool code, and
    * delegates invocation to the `run` helper, proxying requests for composite/invoked tools as necessary.
    *
-   * @param tool The tool to execute.
-   * @param args Input arguments for the tool.
-   * @param opts Optional execution options, including custom tool file path, invocation handler, and recursion depth.
+   * @param tool - The code tool to execute.
+   * @param args - Input arguments for the tool.
+   * @param opts - Optional execution options, including custom tool file path, invocation handler, and recursion depth.
    * @returns The result of the tool execution as a ToolResult.
    */
-  async execute(tool: Tool, args: unknown, opts: ExecuteOpts = {}): Promise<ToolResult> {
+  async execute(tool: CodeTool, args: unknown, opts: ExecuteOpts = {}): Promise<ToolResult> {
+    const bodyOrErr = await this.resolveExecutedBody(tool, opts.toolPath);
+    if (typeof bodyOrErr !== "string") return bodyOrErr;
+    const executedBody = bodyOrErr;
+
     if ((opts.depth ?? 0) > this.maxDepth) {
       return toolError("depth_exceeded", `composite recursion depth exceeded ${this.maxDepth}`);
     }
 
-    let toolPath = opts.toolPath;
-    let cleanupDir: string | null = null;
-    if (!toolPath) {
-      // If no path is given, emit tool code to a fresh temp file.
-      cleanupDir = await mkdtemp(join(tmpdir(), "meta-agent-sb-"));
+    // Snapshot the already-verified bytes so the child never reopens a mutable `opts.toolPath`.
+    const cleanupDir = await mkdtemp(join(tmpdir(), "meta-agent-sb-"));
+    try {
       // Resolve symlinks to ensure Node subprocess permissions match canonical paths.
       const realDir = await realpath(cleanupDir);
-      toolPath = join(realDir, `${tool.manifest.name}.ts`);
-      await writeFile(toolPath, tool.code, "utf8");
-    }
-
-    try {
+      const toolPath = join(realDir, `${tool.manifest.name}.ts`);
+      await writeFile(toolPath, executedBody, "utf8");
       return await this.run(tool, args, toolPath, opts.onInvokeTool, opts.onLLM, opts.depth ?? 0);
     } finally {
-      if (cleanupDir) await rm(cleanupDir, { recursive: true, force: true });
+      await rm(cleanupDir, { recursive: true, force: true });
     }
   }
 
-  private buildSpawnFlags(tool: Tool, toolPath: string, perms: ReturnType<typeof normalizePermissions>): string[] {
+  /**
+   * Resolves the bytes that will run and verifies Link A against the tool manifest hash.
+   * When `toolPath` is set, those on-disk bytes are hashed (not `tool.code`).
+   */
+  private async resolveExecutedBody(
+    tool: CodeTool,
+    toolPath: string | undefined,
+  ): Promise<string | ToolResult> {
+    const { hash: expectedHash, ...manifestSansHash } = tool.manifest;
+    let executedBody: string;
+    if (toolPath) {
+      try {
+        executedBody = await readFile(toolPath, "utf8");
+      } catch (e) {
+        return toolError(
+          "runtime_error",
+          `failed to read tool source at '${toolPath}': ${(e as Error).message}`,
+        );
+      }
+    } else {
+      executedBody = tool.code;
+    }
+    if (hashToolBody(executedBody, manifestSansHash) !== expectedHash) {
+      return toolError(
+        "permission_denied",
+        `tool '${tool.manifest.name}' code does not match its approved manifest hash (Link A failure)`,
+      );
+    }
+    return executedBody;
+  }
+
+  private buildSpawnFlags(tool: CodeTool, toolPath: string, perms: ReturnType<typeof normalizePermissions>): string[] {
     const flags: string[] = [
       ...NODE_TOOL_BASE_FLAGS,
       `--max-old-space-size=${tool.manifest.limits.maxOldSpaceSizeMb}`,
@@ -236,7 +268,7 @@ export class NodePermissionSandbox implements Sandbox {
    * @returns Resolves to the final ToolResult from execution or from top-level error states.
    */
   private run(
-    tool: Tool, args: unknown,
+    tool: CodeTool, args: unknown,
     toolPath: string, onInvoke: InvokeToolHandler | undefined,
     onLLM: LlmHandler | undefined, _depth: number, ): Promise<ToolResult> {
     return new Promise<ToolResult>((resolve) => {

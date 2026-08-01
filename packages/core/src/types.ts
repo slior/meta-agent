@@ -32,6 +32,9 @@ export const TOOL_KIND = {
 /** Kind discriminator on {@link ToolManifest} and {@link ToolDraft}. */
 export type ToolKind = (typeof TOOL_KIND)[keyof typeof TOOL_KIND];
 
+/** Atomic or composite only — never workflow. Used by ToolDraft and CodeTool. */
+export type CodeKind = typeof TOOL_KIND.ATOMIC | typeof TOOL_KIND.COMPOSITE;
+
 /** Mediated, host-serviced capabilities a tool may declare in its manifest. */
 export const TOOL_CAPABILITY = {
   LLM: "llm",
@@ -74,12 +77,6 @@ export type ToolManifest = {
   frameConditions?: string[];
 };
 
-/** A registered tool: manifest plus executable source. */
-export type Tool = {
-  manifest: ToolManifest;
-  code: string;
-};
-
 /** Pre-validation tool proposal from the factory or meta-tools. */
 export type ToolDraft = {
   name: string;
@@ -91,7 +88,7 @@ export type ToolDraft = {
   code: string;
   dependencies: string[];
   smokeTestInput: unknown;
-  kind: ToolKind;
+  kind: CodeKind;
   limits?: Partial<Limits>;
 };
 

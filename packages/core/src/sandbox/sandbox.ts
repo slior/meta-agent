@@ -1,4 +1,5 @@
-import type { Tool, ToolResult } from "../types.ts";
+import type { ToolResult } from "../types.ts";
+import type { CodeTool } from "../tool.ts";
 import type { LLMCapabilityRequest } from "./stdio-protocol.ts";
 
 export type { LLMCapabilityRequest as LlmCapabilityRequest } from "./stdio-protocol.ts";
@@ -15,6 +16,9 @@ export type InvokeToolHandler = (name: string, args: unknown) => Promise<ToolRes
 /**
  * Handler invoked when a capability-bearing tool calls the mediated `llm` capability.
  * The host performs the model call; the tool never sees network or secrets.
+ *
+ * @param req - Structured LLM request from the child tool process.
+ * @returns Tool-shaped result from the host-serviced model call.
  */
 export type LlmHandler = (req: LLMCapabilityRequest) => Promise<ToolResult>;
 
@@ -51,13 +55,14 @@ export interface Sandbox {
    * Use {@link PolicyEnforcedSandbox} when constructing an {@link AgentLoop} to ensure
    * the approval policy is checked before every execution.
    *
-   * @param tool - The compiled or source representation of the tool to run.
+   * @param tool - The code tool (atomic or composite) to run. Workflow tools are dispatched via
+   *   `WorkflowExecutor`, not the raw sandbox.
    * @param args - The arguments to pass to the tool on invocation.
    * @param opts - (Optional) Execution options including toolPath override, composite tool handler, call depth, etc.
    * @returns A Promise that resolves to the ToolResult, including output, errors, or invocation metadata.
    */
   execute(
-    tool: Tool,
+    tool: CodeTool,
     args: unknown,
     opts?: ExecuteOpts
   ): Promise<ToolResult>;

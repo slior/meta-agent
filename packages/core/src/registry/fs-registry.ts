@@ -1,10 +1,66 @@
-import { mkdir, readFile, writeFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { TOOL_KIND, type ApprovalRecord, type Tool, type ToolManifest, type ToolSummary } from "../types.ts";
+import {
+  TOOL_KIND,
+  type ApprovalRecord,
+  type CodeKind,
+  type ToolKind,
+  type ToolManifest,
+  type ToolSummary,
+} from "../types.ts";
+import { isCodeTool, isWorkflowTool, type CodeTool, type Tool, type WorkflowTool } from "../tool.ts";
+import { serializeWorkflowBody } from "../hash.ts";
+import { parseWorkflow, type ParseError } from "../workflow/parser.ts";
 import type { Workflow } from "../workflow/types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
-import { type IntegrityIssue, INTEGRITY_STATUS, RegistryIntegrityError, verifyToolIntegrity } from "./integrity.ts";
+import {
+  type IntegrityIssue,
+  type IntegrityResult,
+  INTEGRITY_BODY_KIND,
+  INTEGRITY_REASON,
+  INTEGRITY_STATUS,
+  RegistryIntegrityError,
+  verifyToolIntegrity,
+} from "./integrity.ts";
 import { isENOENT, registryLogDebug, registryLogWarn } from "./registry-log.ts";
+
+/** File names inside a single `<root>/<tool-name>/` registry entry directory. */
+const ENTRY_FILE = {
+  MANIFEST: "manifest.json",
+  APPROVAL: "approval.json",
+  CODE: "tool.ts",
+  WORKFLOW: "workflow.json",
+} as const;
+
+/**
+ * One cached registry entry.
+ *
+ * `workflowRaw` holds the exact `workflow.json` bytes that passed Link A, so the registry never
+ * has to re-serialize IR to reason about the persisted body (legacy bodies may be minified).
+ * It is private to the registry and never exposed on {@link WorkflowTool}.
+ */
+type CacheEntry = {
+  tool: Tool;
+  approval: ApprovalRecord | null;
+  needsReview?: boolean;
+  workflowRaw?: string;
+};
+
+/** Narrows a manifest read from disk to the workflow kind. */
+function isWorkflowManifest(
+  manifest: ToolManifest,
+): manifest is ToolManifest & { kind: typeof TOOL_KIND.WORKFLOW } {
+  return manifest.kind === TOOL_KIND.WORKFLOW;
+}
+
+/** Narrows a manifest read from disk to the code kinds (atomic or composite). */
+function isCodeManifest(manifest: ToolManifest): manifest is ToolManifest & { kind: CodeKind } {
+  return manifest.kind === TOOL_KIND.ATOMIC || manifest.kind === TOOL_KIND.COMPOSITE;
+}
+
+function formatParseErrors(errors: ParseError[]): string {
+  return errors.map((e) => `${e.pointer}: ${e.message}`).join("; ");
+}
 
 /**
  * FsToolRegistry is a persistent implementation of the ToolRegistry interface,
@@ -12,31 +68,30 @@ import { isENOENT, registryLogDebug, registryLogWarn } from "./registry-log.ts";
  *
  * Tools are organized into subdirectories under a root directory, with each tool having:
  *   - manifest.json: ToolManifest describing the tool (name, description, kind, etc)
- *   - tool.ts: The tool's TypeScript code (atomic and composite tools only)
  *   - approval.json: ApprovalRecord for audit and gating
- *   - workflow.json: For workflow tools, their serialized workflow definition
+ *   - tool.ts: TypeScript source, for atomic and composite tools
+ *   - workflow.json: serialized workflow IR, for workflow tools
  *
- * FsToolRegistry supports workflow tools as first-class entries, grouping
- * workflow IRs and their manifests, and caching their parsed data for fast lookups.
+ * At most one body file exists per entry; a kind-changing save deletes the alternate one.
  *
- * The registry ensures data integrity via "rehydrate", and provides basic CRUD operations,
- * including cascading deletes and dependency checks (tools may depend on others via their manifests).
+ * Reads and writes are kind-explicit (`getCode` / `getWorkflow` / `saveCode` / `saveWorkflow`),
+ * and every cached value is deep-cloned on the way in and out so callers cannot mutate registry
+ * state through a returned object.
+ *
+ * Integrity follows ADR 004: on load, Link A is checked against the raw body bytes as they exist
+ * on disk (never parse-then-reserialize), so any previously hashed formatting still loads. Workflow
+ * bodies additionally go through `parseWorkflow`; a structural failure is recorded as `invalid`
+ * rather than `quarantined`, since the hash binding itself is intact.
  *
  * Example usage:
  *   const reg = await FsToolRegistry.open("/some/dir");
- *   await reg.save(someTool, approvalRecord);
- *   const tool = await reg.get("my-tool");
+ *   await reg.saveCode(someCodeTool, approvalRecord);
+ *   const tool = await reg.getCode("my-tool");
  */
 export class FsToolRegistry implements ToolRegistry {
   private readonly dir: string;
-  /**
-   * In-memory cache mapping tool names to their tool object and approval record.
-   */
-  private cache = new Map<string, { tool: Tool; approval: ApprovalRecord | null; needsReview?: boolean }>();
-  /**
-   * In-memory cache for workflow definitions, by tool name.
-   */
-  private workflows = new Map<string, Workflow>();
+  /** In-memory cache mapping tool names to their tool object, approval record, and load state. */
+  private cache = new Map<string, CacheEntry>();
   /** Integrity problems found during the most recent rehydrate (and on failed saves). */
   private integrityIssues: IntegrityIssue[] = [];
 
@@ -76,7 +131,7 @@ export class FsToolRegistry implements ToolRegistry {
 
   /** Integrity problems found at load (and on failed saves) since the last rehydrate. */
   integrityReport(): IntegrityIssue[] {
-    return [...this.integrityIssues];
+    return this.integrityIssues.map((issue) => ({ ...issue }));
   }
 
   /** True for hidden or non-tool entries under the registry root (e.g. `.DS_Store`). */
@@ -85,44 +140,68 @@ export class FsToolRegistry implements ToolRegistry {
   }
 
   /**
-   * Loads a workflow tool from `workflow.json` into the in-memory caches.
-   * Logs and skips the entry when the file is missing or invalid.
+   * Loads a workflow tool from `workflow.json` into the in-memory cache.
+   *
+   * Link A runs against the raw file bytes; only afterwards is the body parsed structurally.
+   * A parse failure is recorded as `invalid` and the entry is skipped.
    */
   private async loadWorkflowTool(
     entryName: string,
     workflowPath: string,
-    manifest: ToolManifest,
+    manifest: ToolManifest & { kind: typeof TOOL_KIND.WORKFLOW },
     approval: ApprovalRecord | null,
   ): Promise<void> {
-    let wRaw: string;
+    let raw: string;
     try {
-      wRaw = await readFile(workflowPath, "utf8");
+      raw = await readFile(workflowPath, "utf8");
     } catch (err) {
-      registryLogDebug(`entry '${entryName}': missing or corrupt workflow.json`, err);
+      registryLogDebug(`entry '${entryName}': missing or unreadable workflow.json`, err);
       return;
     }
-    let workflow: Workflow;
-    try {
-      workflow = JSON.parse(wRaw) as Workflow;
-    } catch (err) {
-      registryLogDebug(`entry '${entryName}': missing or corrupt workflow.json`, err);
-      return;
-    }
-    const result = verifyToolIntegrity(wRaw, manifest, approval);
-    if (result.status === INTEGRITY_STATUS.quarantined) {
+    const result = verifyToolIntegrity({ kind: INTEGRITY_BODY_KIND.WORKFLOW, raw }, manifest, approval);
+    if (result.status === INTEGRITY_STATUS.QUARANTINED) {
       this.recordIntegrityIssue({ name: manifest.name, path: workflowPath, status: result.status, reason: result.reason });
       return;
     }
-    const needsReview = result.status === INTEGRITY_STATUS.needsReview;
+
+    const workflow = this.parseWorkflowBody(raw);
+    if (workflow === null) {
+      this.recordIntegrityIssue({
+        name: manifest.name,
+        path: workflowPath,
+        status: INTEGRITY_STATUS.INVALID,
+        reason: INTEGRITY_REASON.WORKFLOW_PARSE_FAILED,
+      });
+      return;
+    }
+
+    const needsReview = result.status === INTEGRITY_STATUS.NEEDS_REVIEW;
     if (needsReview) {
       this.recordIntegrityIssue({ name: manifest.name, path: workflowPath, status: result.status, reason: result.reason });
     }
-    this.workflows.set(manifest.name, workflow);
     this.cache.set(manifest.name, {
-      tool: { manifest, code: "" },
+      tool: { manifest, workflow },
       approval: needsReview ? null : approval,
+      workflowRaw: raw,
       ...(needsReview ? { needsReview: true } : {}),
     });
+  }
+
+  /** Parses persisted workflow bytes into typed IR, or null when they are structurally unusable. */
+  private parseWorkflowBody(raw: string): Workflow | null {
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch (err) {
+      registryLogDebug("workflow body is not valid JSON", err);
+      return null;
+    }
+    const parsed = parseWorkflow(json);
+    if (!parsed.ok) {
+      registryLogDebug(`workflow body failed structural validation: ${formatParseErrors(parsed.errors)}`);
+      return null;
+    }
+    return parsed.workflow;
   }
 
   /**
@@ -132,7 +211,7 @@ export class FsToolRegistry implements ToolRegistry {
   private async loadCodeTool(
     entryName: string,
     codePath: string,
-    manifest: ToolManifest,
+    manifest: ToolManifest & { kind: CodeKind },
     approval: ApprovalRecord | null,
   ): Promise<void> {
     let code: string;
@@ -142,12 +221,12 @@ export class FsToolRegistry implements ToolRegistry {
       registryLogDebug(`entry '${entryName}': missing or unreadable tool.ts`, err);
       return;
     }
-    const result = verifyToolIntegrity(code, manifest, approval);
-    if (result.status === INTEGRITY_STATUS.quarantined) {
+    const result = verifyToolIntegrity({ kind: INTEGRITY_BODY_KIND.CODE, code }, manifest, approval);
+    if (result.status === INTEGRITY_STATUS.QUARANTINED || result.status === INTEGRITY_STATUS.INVALID) {
       this.recordIntegrityIssue({ name: manifest.name, path: codePath, status: result.status, reason: result.reason });
       return;
     }
-    if (result.status === INTEGRITY_STATUS.needsReview) {
+    if (result.status === INTEGRITY_STATUS.NEEDS_REVIEW) {
       this.recordIntegrityIssue({ name: manifest.name, path: codePath, status: result.status, reason: result.reason });
       this.cache.set(manifest.name, { tool: { manifest, code }, approval: null, needsReview: true });
       return;
@@ -156,13 +235,12 @@ export class FsToolRegistry implements ToolRegistry {
   }
 
   /**
-   * Reloads the registry contents from disk, clearing in-memory caches.
+   * Reloads the registry contents from disk, clearing the in-memory cache.
    * Called during initialization and manual reloads.
    * Recovers gracefully from missing/corrupt entries.
    */
   private async rehydrate(): Promise<void> {
     this.cache.clear();
-    this.workflows.clear();
     this.integrityIssues = [];
     let entries: string[];
     try {
@@ -177,7 +255,7 @@ export class FsToolRegistry implements ToolRegistry {
   }
 
   /**
-   * Loads one registry subdirectory (manifest, optional approval, tool body) into the caches.
+   * Loads one registry subdirectory (manifest, optional approval, tool body) into the cache.
    * No-op for hidden names, non-directories, or corrupt entries.
    */
   private async rehydrateOneEntry(name: string): Promise<void> {
@@ -188,30 +266,42 @@ export class FsToolRegistry implements ToolRegistry {
       return null;
     });
     if (!st?.isDirectory()) return;
-    const manifestPath = join(sub, "manifest.json");
-    const codePath = join(sub, "tool.ts");
-    const workflowPath = join(sub, "workflow.json");
-    const approvalPath = join(sub, "approval.json");
     try {
-      const mRaw = await readFile(manifestPath, "utf8");
+      const mRaw = await readFile(join(sub, ENTRY_FILE.MANIFEST), "utf8");
       const manifest = JSON.parse(mRaw) as ToolManifest;
-      let approval: ApprovalRecord | null = null;
-      try {
-        approval = JSON.parse(await readFile(approvalPath, "utf8")) as ApprovalRecord;
-      } catch (err) {
-        if (!isENOENT(err)) {
-          registryLogDebug(`entry '${name}': could not load approval.json`, err);
-        }
-      }
+      const approval = await this.readApproval(name, join(sub, ENTRY_FILE.APPROVAL));
 
-      if (manifest.kind === TOOL_KIND.WORKFLOW) {
-        await this.loadWorkflowTool(name, workflowPath, manifest, approval);
+      if (isWorkflowManifest(manifest)) {
+        await this.loadWorkflowTool(name, join(sub, ENTRY_FILE.WORKFLOW), manifest, approval);
+      } else if (isCodeManifest(manifest)) {
+        await this.loadCodeTool(name, join(sub, ENTRY_FILE.CODE), manifest, approval);
       } else {
-        await this.loadCodeTool(name, codePath, manifest, approval);
+        registryLogDebug(`entry '${name}': unknown manifest kind '${String(manifest.kind)}'`);
       }
     } catch (err) {
       registryLogDebug(`entry '${name}': corrupt or incomplete (manifest.json)`, err);
     }
+  }
+
+  /** Reads `approval.json` for an entry; absent or unreadable approvals load as null. */
+  private async readApproval(entryName: string, approvalPath: string): Promise<ApprovalRecord | null> {
+    try {
+      return JSON.parse(await readFile(approvalPath, "utf8")) as ApprovalRecord;
+    } catch (err) {
+      if (!isENOENT(err)) {
+        registryLogDebug(`entry '${entryName}': could not load approval.json`, err);
+      }
+      return null;
+    }
+  }
+
+  private summaries(): ToolSummary[] {
+    return Array.from(this.cache.values()).map(({ tool }) => ({
+      name: tool.manifest.name,
+      description: tool.manifest.description,
+      hash: tool.manifest.hash,
+      kind: tool.manifest.kind,
+    }));
   }
 
   /**
@@ -219,12 +309,7 @@ export class FsToolRegistry implements ToolRegistry {
    * @returns Array of ToolSummary objects
    */
   async list(): Promise<ToolSummary[]> {
-    return Array.from(this.cache.values()).map(({ tool }) => ({
-      name: tool.manifest.name,
-      description: tool.manifest.description,
-      hash: tool.manifest.hash,
-      kind: tool.manifest.kind,
-    }));
+    return this.summaries();
   }
 
   /**
@@ -232,12 +317,7 @@ export class FsToolRegistry implements ToolRegistry {
    * @returns Array of ToolSummary objects
    */
   listSync(): ToolSummary[] {
-    return Array.from(this.cache.values()).map(({ tool }) => ({
-      name: tool.manifest.name,
-      description: tool.manifest.description,
-      hash: tool.manifest.hash,
-      kind: tool.manifest.kind,
-    }));
+    return this.summaries();
   }
 
   /**
@@ -250,61 +330,146 @@ export class FsToolRegistry implements ToolRegistry {
   }
 
   /**
-   * Retrieves the full Tool object for a given tool name, or null if absent.
+   * Returns the stored kind for a tool name, or null when the name is unknown.
    * @param name Tool name
    */
-  async get(name: string): Promise<Tool | null> {
-    return this.cache.get(name)?.tool ?? null;
+  async getKind(name: string): Promise<ToolKind | null> {
+    return this.cache.get(name)?.tool.manifest.kind ?? null;
   }
 
   /**
-   * Retrieves the approval record for a tool, if any.
+   * Returns a defensive copy of a tool's manifest, or null when the name is unknown.
+   * Preferred over the body getters when only metadata is needed.
+   * @param name Tool name
+   */
+  async getManifest(name: string): Promise<ToolManifest | null> {
+    const manifest = this.cache.get(name)?.tool.manifest;
+    return manifest ? structuredClone(manifest) : null;
+  }
+
+  /**
+   * Returns a defensive copy of an atomic or composite tool.
+   * Null when the name is unknown or the stored entry is a workflow.
+   * @param name Tool name
+   */
+  async getCode(name: string): Promise<CodeTool | null> {
+    const entry = this.cache.get(name);
+    if (!entry || !isCodeTool(entry.tool)) return null;
+    return structuredClone(entry.tool);
+  }
+
+  /**
+   * Returns a defensive copy of a workflow tool, including its typed IR.
+   * Null when the name is unknown or the stored entry is a code tool.
+   * @param name Tool name
+   */
+  async getWorkflow(name: string): Promise<WorkflowTool | null> {
+    const entry = this.cache.get(name);
+    if (!entry || !isWorkflowTool(entry.tool)) return null;
+    return structuredClone(entry.tool);
+  }
+
+  /**
+   * Retrieves a defensive copy of the approval record for a tool, if any.
    * @param name Tool name
    */
   async getApproval(name: string): Promise<ApprovalRecord | null> {
-    return this.cache.get(name)?.approval ?? null;
+    const approval = this.cache.get(name)?.approval;
+    return approval ? structuredClone(approval) : null;
   }
 
   /**
-   * Looks up a workflow definition for a workflow tool by name.
-   * Returns null for non-workflow kinds or if not found.
-   * @param name Tool name
-   */
-  async getWorkflow(name: string): Promise<Workflow | null> {
-    return this.workflows.get(name) ?? null;
-  }
-
-  /**
-   * Saves (or updates) a tool and its approval, writing manifests and code to disk, and updating memory cache.
-   * For workflow tools, expects a serialized workflow in the code field.
-   * @param tool Tool definition to save
+   * Saves (or updates) an atomic or composite tool and its approval.
+   * Writes `tool.ts` verbatim so the on-disk bytes are the ones Link A verified, and removes a
+   * stale `workflow.json` when this save changes the entry's kind.
+   * @param tool Code tool to persist
    * @param approval Corresponding approval record
    */
-  async save(tool: Tool, approval: ApprovalRecord): Promise<void> {
-    const verdict = verifyToolIntegrity(tool.code, tool.manifest, approval);
-    if (verdict.status !== INTEGRITY_STATUS.ok) {
-      this.recordIntegrityIssue({
-        name: tool.manifest.name,
-        path: join(this.dir, tool.manifest.name),
-        status: verdict.status,
-        reason: verdict.reason,
-      });
-      throw new RegistryIntegrityError(tool.manifest.name, verdict);
+  async saveCode(tool: CodeTool, approval: ApprovalRecord): Promise<void> {
+    this.assertSaveKind(tool.manifest, false);
+    this.requireOkIntegrity(
+      tool.manifest.name,
+      verifyToolIntegrity({ kind: INTEGRITY_BODY_KIND.CODE, code: tool.code }, tool.manifest, approval),
+    );
+    const sub = await this.writeEntryMetadata(tool.manifest, approval);
+    await writeFile(join(sub, ENTRY_FILE.CODE), tool.code, "utf8");
+    await this.removeStaleBody(sub, ENTRY_FILE.WORKFLOW);
+    this.cache.set(tool.manifest.name, {
+      tool: structuredClone(tool),
+      approval: structuredClone(approval),
+    });
+  }
+
+  /**
+   * Saves (or updates) a workflow tool and its approval.
+   * The IR is serialized once and that exact string is both hashed and written, after passing
+   * structural validation. Removes a stale `tool.ts` when this save changes the entry's kind.
+   * @param tool Workflow tool to persist
+   * @param approval Corresponding approval record
+   * @throws When the IR fails `parseWorkflow`, before anything is written.
+   */
+  async saveWorkflow(tool: WorkflowTool, approval: ApprovalRecord): Promise<void> {
+    this.assertSaveKind(tool.manifest, true);
+    const raw = serializeWorkflowBody(tool.workflow);
+    const parsed = parseWorkflow(JSON.parse(raw));
+    if (!parsed.ok) {
+      throw new Error(
+        `cannot save workflow tool '${tool.manifest.name}': ${INTEGRITY_REASON.WORKFLOW_PARSE_FAILED} (${formatParseErrors(parsed.errors)})`,
+      );
     }
-    const sub = join(this.dir, tool.manifest.name);
+    this.requireOkIntegrity(
+      tool.manifest.name,
+      verifyToolIntegrity({ kind: INTEGRITY_BODY_KIND.WORKFLOW, raw }, tool.manifest, approval),
+    );
+    const sub = await this.writeEntryMetadata(tool.manifest, approval);
+    await writeFile(join(sub, ENTRY_FILE.WORKFLOW), raw, "utf8");
+    await this.removeStaleBody(sub, ENTRY_FILE.CODE);
+    this.cache.set(tool.manifest.name, {
+      tool: structuredClone(tool),
+      approval: structuredClone(approval),
+      workflowRaw: raw,
+    });
+  }
+
+  /** Rejects a save whose manifest kind does not match the kind-explicit method (programmer error). */
+  private assertSaveKind(manifest: ToolManifest, expectWorkflow: boolean): void {
+    const isWorkflow = manifest.kind === TOOL_KIND.WORKFLOW;
+    if (isWorkflow === expectWorkflow) return;
+    const method = expectWorkflow ? "saveWorkflow" : "saveCode";
+    throw new Error(
+      `registry ${method} called for '${manifest.name}' with manifest kind '${manifest.kind}'`,
+    );
+  }
+
+  /** Records and throws unless the entry is fully consistent (Link A and Link B). */
+  private requireOkIntegrity(name: string, result: IntegrityResult): void {
+    if (result.status === INTEGRITY_STATUS.OK) return;
+    this.recordIntegrityIssue({
+      name,
+      path: join(this.dir, name),
+      status: result.status,
+      reason: result.reason,
+    });
+    throw new RegistryIntegrityError(name, result);
+  }
+
+  /** Creates the entry directory and writes its manifest and approval files. Returns the directory. */
+  private async writeEntryMetadata(manifest: ToolManifest, approval: ApprovalRecord): Promise<string> {
+    const sub = join(this.dir, manifest.name);
     await mkdir(sub, { recursive: true });
-    await writeFile(join(sub, "manifest.json"), JSON.stringify(tool.manifest, null, 2), "utf8");
-    await writeFile(join(sub, "approval.json"), JSON.stringify(approval, null, 2), "utf8");
-    
-    if (tool.manifest.kind === TOOL_KIND.WORKFLOW) {
-      // Write tool.code verbatim so on-disk bytes match what verifyToolIntegrity hashed.
-      const workflow = JSON.parse(tool.code) as Workflow;
-      await writeFile(join(sub, "workflow.json"), tool.code, "utf8");
-      this.workflows.set(tool.manifest.name, workflow);
-      this.cache.set(tool.manifest.name, { tool: { manifest: tool.manifest, code: "" }, approval });
-    } else {
-      await writeFile(join(sub, "tool.ts"), tool.code, "utf8");
-      this.cache.set(tool.manifest.name, { tool, approval });
+    await writeFile(join(sub, ENTRY_FILE.MANIFEST), JSON.stringify(manifest, null, 2), "utf8");
+    await writeFile(join(sub, ENTRY_FILE.APPROVAL), JSON.stringify(approval, null, 2), "utf8");
+    return sub;
+  }
+
+  /** Best-effort removal of the body file belonging to the kind this entry no longer has. */
+  private async removeStaleBody(sub: string, file: string): Promise<void> {
+    try {
+      await unlink(join(sub, file));
+    } catch (err) {
+      if (!isENOENT(err)) {
+        registryLogDebug(`could not remove stale body '${file}' in '${sub}'`, err);
+      }
     }
   }
 
@@ -325,7 +490,6 @@ export class FsToolRegistry implements ToolRegistry {
     }
     await rm(join(this.dir, name), { recursive: true, force: true });
     this.cache.delete(name);
-    this.workflows.delete(name);
   }
 
   /**

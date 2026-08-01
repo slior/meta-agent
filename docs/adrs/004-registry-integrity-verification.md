@@ -53,6 +53,9 @@ unapproved (needs-review) tools, but quarantine (Link A) applies even under
 
 ## Consequences
 
+ADR 009 extends the integrity-status set with `invalid` for a body that passes
+Link A but is structurally unusable; this is distinct from `quarantined`.
+
 - The on-disk approval model becomes authoritative: any edit to a body or
   manifest invalidates approval, and tampered tools cannot run.
 - Keeping the verification logic in a standalone pure module makes the future
